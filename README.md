@@ -36,3 +36,8 @@ Statuses: active, suspended, revoked, expired, grace (rotated, old key still val
 
 ## Tests
     python -m unittest discover -s tests -v     # or: pytest
+
+## Audit integrity
+- `audit --verify` checks the hash chain and `audit_meta` (legacy count, event count, head). It exits 7 on any mismatch, including missing metadata.
+- Stores from before hash-chaining have no metadata. Run `audit --adopt-legacy` once to start the chain. Existing events stay unprotected, and the adoption is itself audited.
+- Optional HMAC: set `KEYFORGE_AUDIT_HMAC_KEY_FILE` to a file of at least 16 bytes, mode 0600, kept outside the store. If the key is missing or unusable, writes still succeed (a revoke is never blocked), but the event is stored without a MAC, a warning goes to stderr, and a later keyed `audit --verify` fails.

@@ -19,6 +19,8 @@ class Store:
                 self.data.update(json.loads(self.path.read_text()))
             except json.JSONDecodeError as e:
                 raise KeyForgeError(f"corrupt store {self.path}: {e}")
+        else:  # brand-new store: start the audit chain now, with zero legacy events
+            self.data["audit_meta"] = {"legacy": 0, "count": 0, "head": "0" * 64}
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

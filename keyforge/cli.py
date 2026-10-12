@@ -113,6 +113,9 @@ def cmd_update(a, st):
     _out(a, {"dry_run": a.dry_run, "key": k.public()}, ("[dry-run] would update:\n" if a.dry_run else "Updated:\n") + _key_text(k))
 
 def cmd_audit(a, st):
+    if a.adopt_legacy:
+        ev = audit.adopt_legacy(st); st.save()
+        _out(a, ev, f"audit chain started; {ev['details']['legacy']} legacy event(s) recorded as unprotected"); return
     if a.verify:
         r = audit.verify_chain(st.audit_log, st.data.get("audit_meta"), audit.hmac_key())
         text = (f"audit chain OK: {r['checked']} chained event(s), count {r['count']}, head {r['head']}"
@@ -247,6 +250,8 @@ def build_parser():
     au.add_argument("--key"); au.add_argument("--action"); au.add_argument("--since", help="duration (24h) or ISO time")
     au.add_argument("--limit", type=int); au.add_argument("--export", metavar="FILE", help="write JSON to file")
     au.add_argument("--verify", action="store_true", help="verify the audit hash chain (exit 7 if tampered)")
+    au.add_argument("--adopt-legacy", action="store_true",
+                    help="start the hash chain on a pre-chaining store (trusts existing events)")
 
     po = add("policy", cmd_policy, "show/set org policy")
     psub = po.add_subparsers(dest="policy_cmd")
