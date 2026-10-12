@@ -46,6 +46,7 @@ class TestIpFollowups(unittest.TestCase):
         svc.verify(self.st, s, ip="::ffff:10.2.3.4")
         with self.assertRaises(VerifyFailed): svc.verify(self.st, s, ip="::ffff:192.168.0.1")
         _, s2 = svc.create(self.st, name="b", owner="o", ip_allow=["::ffff:10.0.0.0/104"])
+        self.st.save()  # persist before verify (verify may reload from disk once store locking lands)
         svc.verify(self.st, s2, ip="10.9.9.9")
 
     def test_ip_sanitized_in_reason_and_audit(self):
