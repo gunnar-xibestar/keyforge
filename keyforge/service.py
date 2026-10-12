@@ -119,17 +119,46 @@ def verify(store, secret, scope=None, ip=None, record_use=True) -> ApiKey:
         else:
             reason = None
     if reason:
-        audit.record(store, "verify_fail", k.id if k else None, reason=reason, prefix=pre,
-                     scope=_trunc(scope),
-                     ip=_trunc(ip))
-        store.save()
+        _commit_verify(store, None, "verify_fail", k.id if k else None, reason=reason, prefix=pre,
+                       scope=_trunc(scope), ip=_trunc(ip))
         raise VerifyFailed(reason)
     if record_use:
-        k.last_used_at = iso(now()); store.put(k)
-        audit.record(store, "verify_ok", k.id, scope=_trunc(scope),
-                     ip=_trunc(ip))
-        store.save()
+        ts = iso(now()); k.last_used_at = ts
+        _commit_verify(store, (k.id, ts, k.hash), "verify_ok", k.id, scope=_trunc(scope), ip=_trunc(ip))
     return k
+
+def _commit_verify(store, last_used, action, key_id, **details):
+    """Persist verify side effects without clobbering concurrent writes.
+
+    Under the store lock, re-read the on-disk state and apply *only* the verify delta
+    (``last_used_at`` + one audit event) to it, instead of writing back the in-memory snapshot
+    that was read before verification. A revoke that landed in between is thereby preserved,
+    and the key's status/hash are re-checked on the fresh data.
+
+    Note: because of the reload, unsaved in-memory changes on ``store`` are discarded; library
+    callers must ``store.save()`` before calling ``verify`` (the CLI always does).
+    """
+    held = store.locked
+    if not held:
+        store.acquire()
+    try:
+        store._load()
+        if last_used:
+            kid, ts, h = last_used
+            cur = store.data["keys"].get(kid)
+            st = ApiKey.from_dict(cur).effective_status() if cur else "deleted"
+            if cur is None or cur.get("hash") != h or st not in ("active", "grace"):
+                # state changed between our read and the lock: re-decide on fresh data
+                reason = f"key is {st}" if cur is None or cur.get("hash") == h else "key changed during verification"
+                audit.record(store, "verify_fail", kid, reason=reason, **details)
+                store.save()
+                raise VerifyFailed(reason)
+            cur["last_used_at"] = ts
+        audit.record(store, action, key_id, **details)
+        store.save()
+    finally:
+        if not held:
+            store.release()
 
 def rotate(store, ref, grace_period=None, dry_run=False):
     old = store.get(ref)
@@ -206,7 +235,7 @@ def update(store, ref, add_scopes=(), remove_scopes=(), set_labels=None, unset_l
         audit.record(store, "update", k.id, changes=changes)
     return k
 
-def purge(store, older_than=None, include_revoked=False, dry_run=False) -> list[ApiKey]:
+def purge(store, older_than=None, include_revoked=False, dry_run=False, only_ids=None) -> list[ApiKey]:
     cutoff = now() - (parse_duration(older_than) if older_than else parse_duration("0s"))
     victims = []
     for k in store.all():
@@ -217,6 +246,8 @@ def purge(store, older_than=None, include_revoked=False, dry_run=False) -> list[
             victims.append(k)
         elif include_revoked and st == "revoked" and parse_iso(k.revoked_at) <= cutoff:
             victims.append(k)
+    if only_ids is not None:
+        victims = [k for k in victims if k.id in only_ids]
     if not dry_run:
         for k in victims:
             if k.status in ("revoked", "rotated"):

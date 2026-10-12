@@ -6,7 +6,7 @@ from .errors import KeyForgeError, Aborted, ValidationError
 from .models import parse_duration, now, parse_iso, iso
 from .store import Store
 
-EXIT_OK, EXIT_ERR, EXIT_USAGE, EXIT_NOTFOUND, EXIT_VERIFY, EXIT_POLICY, EXIT_ABORT = 0, 1, 2, 3, 4, 5, 6
+EXIT_OK, EXIT_ERR, EXIT_USAGE, EXIT_NOTFOUND, EXIT_VERIFY, EXIT_POLICY, EXIT_ABORT, EXIT_LOCKED = 0, 1, 2, 3, 4, 5, 6, 8
 
 def _kv(s):
     if "=" not in s:
@@ -19,13 +19,29 @@ def _out(args, data, text=None):
     elif text is not None:
         print(text)
 
-def _confirm(args, msg):
+def _confirm(args, msg, st=None, ref=None, key_id=None):
+    """Ask for confirmation. The store lock is NOT held while waiting for the user: it is
+    released before the prompt, then re-acquired and the store reloaded afterwards. If ``ref`` /
+    ``key_id`` are given, ``ref`` must still resolve to that same key id after the reload."""
     if args.dry_run or args.yes:
         return
     if not sys.stdin.isatty():
         raise Aborted(f"{msg} - refusing without --yes (non-interactive)")
-    if input(f"{msg} [y/N] ").strip().lower() not in ("y", "yes"):
+    held = st is not None and st.locked
+    if held: st.release()
+    try:
+        ans = input(f"{msg} [y/N] ").strip().lower()
+    finally:
+        if held: st.acquire(); st._load()
+    if ans not in ("y", "yes"):
         raise Aborted("aborted by user")
+    if key_id is not None and st is not None:
+        try:
+            now_id = st.get(ref).id
+        except KeyForgeError:
+            now_id = None
+        if now_id != key_id:
+            raise Aborted(f"{ref!r} no longer resolves to {key_id} after confirmation; nothing changed")
 
 def _table(rows, cols):
     w = {c: max(len(c), *(len(str(r.get(c) or "")) for r in rows)) if rows else len(c) for c in cols}
@@ -84,8 +100,9 @@ def cmd_verify(a, st):
          f"VALID: {k.id} ({k.name}) status={k.effective_status()}")
 
 def cmd_rotate(a, st):
-    _confirm(a, f"Rotate key {a.key}?")
-    old, new, full, gu = svc.rotate(st, a.key, a.grace_period, a.dry_run)
+    k = st.get(a.key)
+    _confirm(a, f"Rotate key {k.id} ({k.name})?", st, a.key, k.id)
+    old, new, full, gu = svc.rotate(st, k.id, a.grace_period, a.dry_run)
     if a.dry_run:
         _out(a, {"dry_run": True, "old": old.id, "grace_until": iso(gu)},
              f"[dry-run] would rotate {old.id}; old key valid until {iso(gu)}"); return
@@ -95,8 +112,12 @@ def cmd_rotate(a, st):
 
 def _status_cmd(status, verb):
     def run(a, st):
-        if status == "revoked": _confirm(a, f"Revoke key {a.key}? This cannot be undone.")
-        k = svc.set_status(st, a.key, status, getattr(a, "reason", None), a.dry_run)
+        ref = a.key
+        if status == "revoked":
+            kid = st.get(a.key).id
+            _confirm(a, f"Revoke key {kid} ({st.get(kid).name})? This cannot be undone.", st, a.key, kid)
+            ref = kid
+        k = svc.set_status(st, ref, status, getattr(a, "reason", None), a.dry_run)
         if not a.dry_run: st.save()
         pre = "[dry-run] would " + verb.lower().rstrip("d") if a.dry_run else verb
         _out(a, {"dry_run": a.dry_run, "key": k.public()}, f"{pre} {k.id} ({k.name})")
@@ -135,7 +156,7 @@ def cmd_policy(a, st):
         p = pol.effective(st)
         _out(a, p, "\n".join(f"{k:<24} {v}" for k, v in p.items())); return
     if a.policy_cmd == "reset":
-        _confirm(a, "Reset org policy to defaults?")
+        _confirm(a, "Reset org policy to defaults?", st)
         if not a.dry_run: st.data["policy"] = {}; audit.record(st, "policy_reset"); st.save()
         _out(a, {"reset": True, "dry_run": a.dry_run}, "policy reset" + (" (dry-run)" if a.dry_run else "")); return
     if a.field not in POLICY_KEYS:
@@ -170,8 +191,9 @@ def cmd_import(a, st):
 def cmd_purge(a, st):
     victims = svc.purge(st, a.older_than, a.include_revoked, dry_run=True)
     if victims and not a.dry_run:
-        _confirm(a, f"Permanently delete {len(victims)} key record(s)?")
-        svc.purge(st, a.older_than, a.include_revoked); st.save()
+        _confirm(a, f"Permanently delete {len(victims)} key record(s)?", st)
+        # store was reloaded after the prompt: delete only confirmed keys that are still eligible
+        victims = svc.purge(st, a.older_than, a.include_revoked, only_ids={k.id for k in victims}); st.save()
     _out(a, {"dry_run": a.dry_run, "purged": [k.id for k in victims]},
          f"{'[dry-run] would purge' if a.dry_run else 'purged'} {len(victims)} key(s)" +
          "".join(f"\n  {k.id} {k.name} ({k.effective_status()})" for k in victims))
@@ -192,7 +214,7 @@ def build_parser():
     sub_common.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="JSON output")
     p = argparse.ArgumentParser(prog="keyforge", parents=[common],
         description=f"{MOCK_BANNER}. Manage mock enterprise API keys.",
-        epilog="Exit codes: 0 ok, 1 error, 2 usage/validation, 3 not found, 4 verify failed, 5 policy violation, 6 aborted")
+        epilog="Exit codes: 0 ok, 1 error, 2 usage/validation, 3 not found, 4 verify failed, 5 policy violation, 6 aborted, 8 store locked (timeout)")
     p.add_argument("--version", action="version", version=f"keyforge {__version__} (MOCK)")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
     def add(name, fn, help, parents=()):
@@ -263,8 +285,11 @@ def main(argv=None) -> int:
     for f in ("dry_run", "yes"):
         if not hasattr(args, f): setattr(args, f, False)
     try:
-        st = Store(args.store)
-        rc = args.func(args, st)
+        st = Store(args.store, lock=True)  # exclusive lock held for the whole read-modify-write
+        try:
+            rc = args.func(args, st)
+        finally:
+            st.close()
         return rc or EXIT_OK
     except KeyForgeError as e:
         if args.json: print(json.dumps({"error": str(e), "exit_code": e.exit_code}))
