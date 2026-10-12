@@ -2,7 +2,7 @@ import copy, io, json, os, tempfile, unittest
 from contextlib import redirect_stdout, redirect_stderr
 os.environ["KEYFORGE_PBKDF2_ITERS"] = "1000"
 from keyforge import cli, service as svc
-from keyforge.errors import ValidationError, PolicyViolation, KeyForgeError
+from keyforge.errors import ValidationError, PolicyViolation, KeyForgeError, VerifyFailed
 from keyforge.store import Store
 
 def run(*argv):
@@ -136,6 +136,67 @@ class TestImportFollowups(TestImportValidation):
         self.assertEqual(det["overwritten_ids"], [self.k.id]); self.assertEqual(det["credential_changed_ids"], [self.k.id])
         svc.import_(self.dst, data, overwrite=True)
         self.assertNotIn("credential_changed_ids", self.dst.audit_log[-1]["details"])
+
+class TestImportRound3(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.TemporaryDirectory()
+        self.st = Store(os.path.join(self.d.name, "s.json"))
+        self.k, self.secret = svc.create(self.st, name="n", owner="o")
+        self.leak = copy.deepcopy(self.k.to_dict())
+        svc.set_status(self.st, self.k.id, "revoked", reason="leak")
+    def tearDown(self): self.d.cleanup()
+    def data(self, **upd):
+        r = copy.deepcopy(self.leak); r.update(upd)
+        return {"format": "keyforge-export", "version": 1, "keys": [r]}
+
+    def test_repro_expired_leak_under_new_id_blocked(self):
+        from datetime import timedelta
+        from keyforge.models import now, iso
+        d = self.data(id="key_cccccccccccc", expires_at=iso(now() - timedelta(days=1)))
+        with self.assertRaises(KeyForgeError): svc.import_(self.st, d)
+        self.assertNotIn("key_cccccccccccc", self.st.data["keys"])
+
+    def test_non_usable_statuses_checked(self):
+        for upd in ({"status": "revoked", "revoked_at": "2026-01-01T00:00:00Z"},
+                    {"status": "rotated", "grace_until": "2026-01-01T00:00:00Z"}):
+            with self.assertRaises(KeyForgeError): svc.import_(self.st, self.data(id="key_dddddddddddd", **upd))
+
+    def test_same_id_revoked_reimport_ok(self):
+        d = self.data(status="revoked", revoked_at="2026-01-01T00:00:00Z")
+        svc.import_(self.st, d, overwrite=True)
+
+    def test_update_cannot_revive_retired_credential(self):
+        from datetime import timedelta
+        from keyforge.models import now, iso
+        # repro: forced in under a new id, expired, then update --no-expiry
+        d = self.data(id="key_eeeeeeeeeeee", expires_at=iso(now() - timedelta(days=1)))
+        svc.import_(self.st, d, allow_unrevoke=True)
+        with self.assertRaises(KeyForgeError): svc.update(self.st, "key_eeeeeeeeeeee", clear_expiry=True)
+        with self.assertRaises(KeyForgeError):
+            svc.update(self.st, "key_eeeeeeeeeeee", expires_at=now() + timedelta(days=5))
+        svc.update(self.st, "key_eeeeeeeeeeee", description="ok")  # non-reviving updates allowed
+        with self.assertRaises(VerifyFailed): svc.verify(self.st, self.secret)
+
+    def test_resume_blocked_for_retired_credential(self):
+        d = self.data(id="key_ffffffffffff", status="suspended")
+        svc.import_(self.st, d, allow_unrevoke=True)
+        with self.assertRaises(KeyForgeError): svc.set_status(self.st, "key_ffffffffffff", "active")
+
+    def test_normal_update_and_resume_unaffected(self):
+        from datetime import timedelta
+        from keyforge.models import now
+        k, _ = svc.create(self.st, name="m", owner="o")
+        svc.update(self.st, k.id, expires_at=now() + timedelta(days=5)); svc.update(self.st, k.id, clear_expiry=True)
+        svc.set_status(self.st, k.id, "suspended"); svc.set_status(self.st, k.id, "active")
+
+    def test_rotated_remembered_at_purge(self):
+        k, _ = svc.create(self.st, name="r", owner="o")
+        old, new, _, _ = svc.rotate(self.st, k.id, grace_period="0s")
+        rec = self.st.data["keys"][k.id]; rec["grace_until"] = "2020-01-01T00:00:00Z"
+        svc.purge(self.st)
+        self.assertNotIn(k.id, self.st.data["keys"])
+        kinds = {r["id"]: r["kind"] for r in self.st.revoked_hashes}
+        self.assertEqual(kinds[k.id], "rotated")
 
 if __name__ == "__main__":
     unittest.main()

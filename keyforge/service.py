@@ -127,6 +127,8 @@ def set_status(store, ref, status, reason=None, dry_run=False) -> ApiKey:
         raise KeyForgeError("key is already revoked")
     if status == "active" and k.status != "suspended":
         raise KeyForgeError(f"can only resume a suspended key (status: {cur})")
+    if status == "active" and _retired_match(_retired_creds(store), k.to_dict()):
+        raise KeyForgeError(f"refusing to resume {k.id}: its credential matches a revoked or retired key")
     if status == "suspended" and cur != "active":
         raise KeyForgeError(f"can only suspend an active key (status: {cur})")
     if dry_run:
@@ -147,6 +149,11 @@ def update(store, ref, add_scopes=(), remove_scopes=(), set_labels=None, unset_l
     if k.effective_status() == "revoked":
         raise KeyForgeError("cannot update a revoked key")
     _validate(add_scopes, add_ip)
+    cur_exp = parse_iso(k.expires_at)
+    extends = clear_expiry and cur_exp is not None or (expires_at is not None and (cur_exp is None or expires_at > cur_exp))
+    if extends and _retired_match(_retired_creds(store), k.to_dict(), exclude_id=None):
+        raise KeyForgeError(f"refusing to extend/clear expiry of {k.id}: its credential matches a revoked "
+                            "or retired key (rotate it instead)")
     scopes = sorted((set(k.scopes) | set(add_scopes)) - set(remove_scopes))
     labels = {**k.labels, **(set_labels or {})}
     for l in unset_labels: labels.pop(l, None)
@@ -178,8 +185,8 @@ def purge(store, older_than=None, include_revoked=False, dry_run=False) -> list[
             victims.append(k)
     if not dry_run:
         for k in victims:
-            if k.status == "revoked":
-                _remember_revoked(store, k)  # keep the hash on record after the key is gone
+            if k.status in ("revoked", "rotated"):
+                _remember_revoked(store, k, k.status)  # keep the credential on record after the key is gone
             store.delete(k.id)
             audit.record(store, "purge", k.id, status=k.effective_status())
     return victims
@@ -298,12 +305,8 @@ def import_(store, data, overwrite=False, dry_run=False, allow_unrevoke=False) -
         raise ValidationError("'keys' must be a list")
     res = {"added": [], "skipped": [], "overwritten": []}
     staged, seen = [], set()
-    revoked_hashes = {r["hash"] for r in store.revoked_hashes}
-    revoked_prefixes = {r["prefix"] for r in store.revoked_hashes}
-    for kd in store.data["keys"].values():
-        if kd.get("status") == "revoked":
-            revoked_hashes.add(kd["hash"]["hash"]); revoked_prefixes.add(kd["prefix"])
-    changed_creds = []
+    retired = _retired_creds(store)
+    changed_creds, unrevoked = [], []
     for idx, d in enumerate(keys):
         rec = _validate_import_record(store, d, idx)
         k = rec["id"]
@@ -312,11 +315,17 @@ def import_(store, data, overwrite=False, dry_run=False, allow_unrevoke=False) -
         seen.add(k)
         if k in store.data["keys"] and not overwrite:
             res["skipped"].append(k); continue
-        usable = ApiKey.from_dict(rec).effective_status() in ("active", "grace", "suspended")
-        if usable and not allow_unrevoke:
-            if rec["hash"]["hash"] in revoked_hashes or rec["prefix"] in revoked_prefixes:
-                raise KeyForgeError(f"refusing to import {k}: its hash or prefix belongs to a revoked key "
-                                    "(use --allow-unrevoke to force)")
+        # Checked for EVERY record regardless of status: an expired/rotated record can be revived
+        # later with `update`, so the credential itself must not be re-introduced.
+        hit = _retired_match(retired, rec)
+        if hit and rec["status"] == "revoked" and all(i == k for i in hit):
+            hit = None  # re-importing the same key id as revoked is harmless
+        if hit:
+            if not allow_unrevoke:
+                raise KeyForgeError(f"refusing to import {k}: its hash or prefix belongs to revoked/retired "
+                                    f"key(s) {', '.join(sorted(set(hit)))} (use --allow-unrevoke to force)")
+            unrevoked.append(k)
+        if not allow_unrevoke:
             for oid, od in list(store.data["keys"].items()) + [(r["id"], r) for r in staged]:
                 if oid != k and (od["hash"]["hash"] == rec["hash"]["hash"] or od["prefix"] == rec["prefix"]):
                     raise KeyForgeError(f"refusing to import {k}: hash or prefix collides with key {oid} "
@@ -341,14 +350,23 @@ def import_(store, data, overwrite=False, dry_run=False, allow_unrevoke=False) -
                      overwritten=len(res["overwritten"]), skipped=len(res["skipped"]),
                      overwritten_ids=res["overwritten"] or None,
                      credential_changed_ids=changed_creds or None,
-                     unrevoked=[r["id"] for r in staged if allow_unrevoke and r["status"] != "revoked"
-                                and (r["hash"]["hash"] in revoked_hashes or r["prefix"] in revoked_prefixes)]
-                               or None)
+                     unrevoked=unrevoked or None)
     return res
 
-def _remember_revoked(store, k) -> None:
-    """Record a revoked key's hash/prefix in a list that survives purge."""
+def _remember_revoked(store, k, kind="revoked") -> None:
+    """Record a retired (revoked or rotated) key's hash/prefix in a list that survives purge."""
     d = k if isinstance(k, dict) else k.to_dict()
     if not any(r["hash"] == d["hash"]["hash"] for r in store.revoked_hashes):
         store.revoked_hashes.append({"id": d["id"], "prefix": d["prefix"], "hash": d["hash"]["hash"],
-                                     "revoked_at": d.get("revoked_at")})
+                                     "kind": kind, "at": d.get("revoked_at") or d.get("grace_until")})
+
+def _retired_creds(store) -> list[tuple[str, str, str]]:
+    """(id, prefix, hash) of every remembered retired credential plus currently revoked keys."""
+    out = [(r["id"], r["prefix"], r["hash"]) for r in store.revoked_hashes]
+    out += [(i, kd["prefix"], kd["hash"]["hash"]) for i, kd in store.data["keys"].items()
+            if kd.get("status") == "revoked"]
+    return out
+
+def _retired_match(retired, d, exclude_id=None) -> list[str]:
+    return [i for i, p, h in retired if i != exclude_id and (h == d["hash"]["hash"] or p == d["prefix"])]
+
