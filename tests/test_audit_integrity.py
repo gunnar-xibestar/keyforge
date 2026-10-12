@@ -49,7 +49,7 @@ class TestAuditIntegrity(unittest.TestCase):
 
     def test_legacy_prefix_allowed_but_not_after_chain(self):
         legacy = [{"ts": "2026-01-01T00:00:00Z", "actor": "x", "action": "create", "key_id": None, "details": {}}]
-        st = Store(os.path.join(self.d.name, "l.json")); st.data["audit"] = list(legacy)
+        st = Store(os.path.join(self.d.name, "l.json")); st.data["audit"] = list(legacy); st.data.pop("audit_meta")
         audit.record(st, "export")
         r = audit.verify_chain(st.audit_log, st.data['audit_meta']); self.assertTrue(r["ok"]); self.assertEqual(r["legacy"], 1)
         st.audit_log.append(dict(legacy[0])); st.data["audit_meta"]["count"] += 1
@@ -84,6 +84,7 @@ class TestAuditFollowups(unittest.TestCase):
     def test_legacy_count_frozen(self):
         legacy = {"ts": "2026-01-01T00:00:00Z", "actor": "x", "action": "create", "key_id": None, "details": {}}
         st = Store(os.path.join(self.d.name, "l.json")); st.data["audit"] = [dict(legacy), dict(legacy)]
+        st.data.pop("audit_meta")  # simulate a store written before chaining existed
         audit.record(st, "export")
         self.assertEqual(st.data["audit_meta"]["legacy"], 2)
         self.assertTrue(audit.verify_chain(st.audit_log, st.data["audit_meta"])["ok"])
@@ -118,6 +119,7 @@ class TestAuditFollowups(unittest.TestCase):
     def test_hmac(self):
         kf = os.path.join(self.d.name, "hmac.key")
         with open(kf, "wb") as f: f.write(b"k" * 32)
+        os.chmod(kf, 0o600)
         with mock.patch.dict(os.environ, {"KEYFORGE_AUDIT_HMAC_KEY_FILE": kf}):
             key = audit.hmac_key()
             audit.record(self.st, "export"); audit.record(self.st, "export")
@@ -135,6 +137,59 @@ class TestAuditFollowups(unittest.TestCase):
         data["audit"].pop()
         with open(self.path, "w") as f: json.dump(data, f)
         self.assertEqual(run("--store", self.path, "audit", "--verify")[0], 7)
+
+class TestAuditRound3(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.TemporaryDirectory(); self.path = os.path.join(self.d.name, "s.json")
+    def tearDown(self): self.d.cleanup()
+
+    def test_meta_written_at_creation(self):
+        st = Store(self.path); self.assertEqual(st.data["audit_meta"]["legacy"], 0)
+        st.save(); self.assertEqual(run("--store", self.path, "audit", "--verify")[0], 0)
+
+    def test_repro_strip_everything_exits_7(self):
+        rc, out, _ = run("--store", self.path, "--json", "create", "--name", "n", "--owner", "o")
+        kid = json.loads(out)["key"]["id"]
+        run("--store", self.path, "revoke", kid, "--yes")
+        with open(self.path) as f: data = json.load(f)
+        del data["audit_meta"]
+        for e in data["audit"]:
+            e.pop("hash", None); e.pop("prev_hash", None)
+        data["audit"] = [e for e in data["audit"] if e["action"] != "revoke"]
+        with open(self.path, "w") as f: json.dump(data, f)
+        self.assertEqual(run("--store", self.path, "audit", "--verify")[0], 7)
+        # and adopt-legacy refuses only if chained events remain; here they were all stripped, so the
+        # adoption itself is recorded with the real os_user as an explicit trust decision
+        self.assertEqual(run("--store", self.path, "audit", "--adopt-legacy")[0], 0)
+        self.assertEqual(run("--store", self.path, "audit", "--verify")[0], 0)
+
+    def test_adopt_legacy_refuses_with_chained_events(self):
+        st = Store(self.path); audit.record(st, "export"); st.data.pop("audit_meta"); st.save()
+        self.assertEqual(run("--store", self.path, "audit", "--adopt-legacy")[0], 1)
+
+    def _keyfile(self, mode):
+        kf = os.path.join(self.d.name, "k")
+        with open(kf, "wb") as f: f.write(b"z" * 32)
+        os.chmod(kf, mode); return kf
+
+    def test_key_file_permissions_rejected(self):
+        for mode in (0o640, 0o604, 0o644):
+            kf = self._keyfile(mode)
+            with mock.patch.dict(os.environ, {"KEYFORGE_AUDIT_HMAC_KEY_FILE": kf}):
+                with self.assertRaises(Exception) as cm: audit.hmac_key()
+                self.assertIn("chmod 600", str(cm.exception))
+
+    def test_missing_key_does_not_block_revoke_but_verify_fails(self):
+        st = Store(self.path); k, s = svc.create(st, name="n", owner="o"); st.save()
+        missing = os.path.join(self.d.name, "nope")
+        with mock.patch.dict(os.environ, {"KEYFORGE_AUDIT_HMAC_KEY_FILE": missing}):
+            rc, _, err = run("--store", self.path, "revoke", k.id, "--yes")
+            self.assertEqual(rc, 0); self.assertIn("WITHOUT HMAC", err)
+            self.assertEqual(Store(self.path).get(k.id).status, "revoked")
+            rc, _, err = run("--store", self.path, "audit", "--verify")
+            self.assertEqual(rc, 1); self.assertIn("unusable", err)
+        ev = Store(self.path).audit_log[-1]; self.assertIn("hmac_error", ev)
+        self.assertTrue(audit.verify_chain(Store(self.path).audit_log, Store(self.path).data["audit_meta"])["ok"])
 
 if __name__ == "__main__":
     unittest.main()

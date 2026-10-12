@@ -16,7 +16,7 @@ Attribution: KEYFORGE_ACTOR and SUDO_USER are *claims* (env vars); ``os_user``/`
 from the process uid and are what to trust.
 """
 from __future__ import annotations
-import getpass, hashlib, hmac, json, os
+import getpass, hashlib, hmac, json, os, sys
 from .errors import KeyForgeError
 from .models import iso, now, parse_iso
 
@@ -45,11 +45,27 @@ def actor() -> str:
         return "unknown"
 
 def hmac_key() -> bytes | None:
+    """Load the optional audit HMAC key from $KEYFORGE_AUDIT_HMAC_KEY_FILE.
+
+    Raises KeyForgeError if the variable is set but the file is missing, unreadable, too short,
+    a symlink, or accessible by group/other (mode must be 0600 or stricter)."""
     p = os.environ.get("KEYFORGE_AUDIT_HMAC_KEY_FILE")
     if not p:
         return None
-    with open(os.path.expanduser(p), "rb") as f:
-        k = f.read().strip()
+    p = os.path.expanduser(p)
+    try:
+        fd = os.open(p, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as e:
+        raise KeyForgeError(f"audit HMAC key file {p} unusable: {e.strerror}")
+    try:
+        st = os.fstat(fd)
+        if st.st_mode & 0o077:
+            raise KeyForgeError(f"audit HMAC key file {p} must not be group/world accessible (chmod 600)")
+        with os.fdopen(fd, "rb") as f:
+            fd = None
+            k = f.read().strip()
+    finally:
+        if fd is not None: os.close(fd)
     if len(k) < 16:
         raise KeyForgeError("audit HMAC key file must contain at least 16 bytes")
     return k
@@ -77,7 +93,15 @@ def record(store, action: str, key_id: str | None = None, **details) -> dict:
         ev["sudo_user_claim"] = sudo[:64]  # unverified: env var
     ev = json.loads(canonical(ev))  # normalize to exactly what will be stored (raises on non-JSON)
     ev["hash"] = entry_hash(ev)
-    key = hmac_key()
+    # Writes are never blocked by a key problem (a revoke must always land). Instead the event is
+    # stored without a MAC, flagged, and a warning printed; `audit --verify` with the key then fails.
+    try:
+        key = hmac_key()
+    except KeyForgeError as e:
+        key = None
+        ev["hmac_error"] = str(e)[:200]; ev["hash"] = entry_hash(ev)
+        meta.pop("mac", None)
+        print(f"keyforge: warning: audit event written WITHOUT HMAC: {e}", file=sys.stderr)
     if key:
         meta.setdefault("hmac_from", len(log))
         ev["mac"] = _mac(key, ev["hash"])
@@ -94,11 +118,10 @@ def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) 
            "mac_verified": False, "error": None, "index": None}
     def fail(msg, i=None): return {**res, "ok": False, "error": msg, "index": i}
     if meta is None:
-        if any("hash" in e or "prev_hash" in e for e in log):
-            return fail("audit metadata missing but log contains chained events")
-        if key:
-            return fail("HMAC key configured but the audit log has no MAC metadata")
-        return {**res, "legacy": len(log)}
+        # New stores always get audit_meta at creation and old stores get it on their first new
+        # event, so missing metadata means it was deleted (or the store predates chaining and
+        # needs an explicit `audit --adopt-legacy`).
+        return fail("audit metadata missing (deleted, or legacy store not adopted: run `audit --adopt-legacy`)")
     legacy = meta.get("legacy")
     if not isinstance(legacy, int) or not 0 <= legacy <= len(log):
         return fail("audit metadata has an invalid legacy count")
@@ -127,6 +150,14 @@ def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) 
         return fail("head hash does not match metadata")
     res["head"] = prev; res["mac_verified"] = bool(key)
     return res
+
+def adopt_legacy(store) -> dict:
+    """Explicitly start chaining on a store that has only legacy events and no metadata."""
+    if store.data.get("audit_meta") is not None:
+        raise KeyForgeError("audit chain already initialized")
+    if any("hash" in e or "prev_hash" in e for e in store.audit_log):
+        raise KeyForgeError("log contains chained events but no metadata: refusing to adopt (possible tampering)")
+    return record(store, "audit_adopt_legacy", None, legacy=len(store.audit_log))
 
 def query(store, key_id=None, action=None, since=None, limit=None) -> list[dict]:
     out = store.audit_log
