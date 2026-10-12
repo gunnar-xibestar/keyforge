@@ -32,7 +32,7 @@ Scopes take the form `resource:action`, and grants may be globs (`read:*`).
 Statuses: active, suspended, revoked, expired, grace (rotated, old key still valid), rotated.
 
 ## Exit codes
-0 ok · 1 error · 2 usage/validation · 3 not found · 4 verification failed · 5 policy violation · 6 aborted (no confirmation)
+0 ok · 1 error · 2 usage/validation · 3 not found · 4 verification failed · 5 policy violation · 6 aborted (no confirmation) · 7 audit log tampered (`audit --verify`)
 
 ## Tests
     python -m unittest discover -s tests -v     # or: pytest
