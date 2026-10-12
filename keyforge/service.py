@@ -101,7 +101,11 @@ def _commit_verify(store, last_used, action, key_id, **details):
 
     Under the store lock, re-read the on-disk state and apply *only* the verify delta
     (``last_used_at`` + one audit event) to it, instead of writing back the in-memory snapshot
-    that was read before verification. A revoke that landed in between is thereby preserved.
+    that was read before verification. A revoke that landed in between is thereby preserved,
+    and the key's status/hash are re-checked on the fresh data.
+
+    Note: because of the reload, unsaved in-memory changes on ``store`` are discarded; library
+    callers must ``store.save()`` before calling ``verify`` (the CLI always does).
     """
     held = store.locked
     if not held:
