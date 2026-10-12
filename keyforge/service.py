@@ -69,6 +69,36 @@ def list_keys(store, owner=None, team=None, env=None, status=None, scope=None, l
 def scope_granted(granted, required) -> bool:
     return any(fnmatch.fnmatch(required, g) for g in granted)
 
+def _norm_ip(addr):
+    """Collapse IPv4-mapped IPv6 (::ffff:a.b.c.d) to plain IPv4 so v4 allow lists apply."""
+    return getattr(addr, "ipv4_mapped", None) or addr
+
+def _safe_ip(ip, limit=64) -> str:
+    """Untrusted CLI value (--ip, --scope) rendered safely for reasons and audit logs."""
+    r = repr(ip)
+    return r if len(r) <= limit else r[:limit] + "...'"
+
+def _trunc(v, limit=64):
+    """Raw untrusted value for structured audit details: kept as-is (JSON escapes it), only truncated."""
+    return None if v is None else str(v)[:limit]
+
+def _ip_allowed(ip, allow) -> bool:
+    """True only if ip parses and falls in a valid allow-list entry. Never raises."""
+    try:
+        addr = _norm_ip(ipaddress.ip_address(ip))
+    except (ValueError, TypeError):
+        return False  # malformed client ip never matches (fail closed)
+    for c in allow:
+        try:
+            net = ipaddress.ip_network(c, strict=False)
+        except (ValueError, TypeError):
+            continue  # corrupt stored CIDR: skip it, never crash verify
+        if net.version == 6 and getattr(net.network_address, "ipv4_mapped", None):
+            net = ipaddress.ip_network(f"{net.network_address.ipv4_mapped}/{max(net.prefixlen - 96, 0)}")
+        if addr.version == net.version and addr in net:
+            return True
+    return False
+
 def verify(store, secret, scope=None, ip=None, record_use=True) -> ApiKey:
     pre = crypto.prefix_of(secret)
     reason = "unknown key"
@@ -81,19 +111,23 @@ def verify(store, secret, scope=None, ip=None, record_use=True) -> ApiKey:
         if st not in ("active", "grace"):
             reason = f"key is {st}"
         elif scope and not scope_granted(k.scopes, scope):
-            reason = f"missing scope {scope}"
-        elif ip and k.ip_allow and not any(
-                ipaddress.ip_address(ip) in ipaddress.ip_network(c, strict=False) for c in k.ip_allow):
-            reason = f"ip {ip} not in allow list"
+            reason = f"missing scope {_safe_ip(scope)}"
+        elif k.ip_allow and not ip:
+            reason = "key has an ip allow list but no client ip was supplied"
+        elif k.ip_allow and not _ip_allowed(ip, k.ip_allow):
+            reason = f"ip {_safe_ip(ip)} not in allow list"
         else:
             reason = None
     if reason:
-        audit.record(store, "verify_fail", k.id if k else None, reason=reason, prefix=pre, scope=scope, ip=ip)
+        audit.record(store, "verify_fail", k.id if k else None, reason=reason, prefix=pre,
+                     scope=_trunc(scope),
+                     ip=_trunc(ip))
         store.save()
         raise VerifyFailed(reason)
     if record_use:
         k.last_used_at = iso(now()); store.put(k)
-        audit.record(store, "verify_ok", k.id, scope=scope, ip=ip)
+        audit.record(store, "verify_ok", k.id, scope=_trunc(scope),
+                     ip=_trunc(ip))
         store.save()
     return k
 
