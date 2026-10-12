@@ -69,6 +69,13 @@ def list_keys(store, owner=None, team=None, env=None, status=None, scope=None, l
 def scope_granted(granted, required) -> bool:
     return any(fnmatch.fnmatch(required, g) for g in granted)
 
+def _ip_allowed(ip, allow) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False  # malformed client ip never matches (fail closed)
+    return any(addr in ipaddress.ip_network(c, strict=False) for c in allow)
+
 def verify(store, secret, scope=None, ip=None, record_use=True) -> ApiKey:
     pre = crypto.prefix_of(secret)
     reason = "unknown key"
@@ -82,8 +89,9 @@ def verify(store, secret, scope=None, ip=None, record_use=True) -> ApiKey:
             reason = f"key is {st}"
         elif scope and not scope_granted(k.scopes, scope):
             reason = f"missing scope {scope}"
-        elif ip and k.ip_allow and not any(
-                ipaddress.ip_address(ip) in ipaddress.ip_network(c, strict=False) for c in k.ip_allow):
+        elif k.ip_allow and not ip:
+            reason = "key has an ip allow list but no client ip was supplied"
+        elif k.ip_allow and not _ip_allowed(ip, k.ip_allow):
             reason = f"ip {ip} not in allow list"
         else:
             reason = None
