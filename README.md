@@ -36,3 +36,9 @@ Statuses: active, suspended, revoked, expired, grace (rotated, old key still val
 
 ## Tests
     python -m unittest discover -s tests -v     # or: pytest
+
+## Release notes
+
+### Unreleased: import hardening
+- The store now keeps `revoked_hashes`, a list that `purge` never clears. It holds the id, prefix and hash of every key that was revoked, or rotated and then purged. `import` rejects any record that matches an entry on this list, whatever the record's status. The same applies to another existing key's hash or prefix. `--allow-unrevoke` overrides this. `update` (extending or clearing expiry) and `resume` refuse to revive a key whose credential is on the list.
+- **Known gap:** keys revoked or rotated and then **purged before this change** were never recorded, so these checks can't catch them. If you need protection for them, restore them from an older export as revoked records. Matching ids are allowed.
