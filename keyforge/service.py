@@ -74,7 +74,7 @@ def _norm_ip(addr):
     return getattr(addr, "ipv4_mapped", None) or addr
 
 def _safe_ip(ip, limit=64) -> str:
-    """Untrusted --ip value rendered safely for reasons and audit logs."""
+    """Untrusted CLI value (--ip, --scope) rendered safely for reasons and audit logs."""
     r = repr(ip)
     return r if len(r) <= limit else r[:limit] + "...'"
 
@@ -107,7 +107,7 @@ def verify(store, secret, scope=None, ip=None, record_use=True) -> ApiKey:
         if st not in ("active", "grace"):
             reason = f"key is {st}"
         elif scope and not scope_granted(k.scopes, scope):
-            reason = f"missing scope {scope}"
+            reason = f"missing scope {_safe_ip(scope)}"
         elif k.ip_allow and not ip:
             reason = "key has an ip allow list but no client ip was supplied"
         elif k.ip_allow and not _ip_allowed(ip, k.ip_allow):
@@ -115,13 +115,15 @@ def verify(store, secret, scope=None, ip=None, record_use=True) -> ApiKey:
         else:
             reason = None
     if reason:
-        audit.record(store, "verify_fail", k.id if k else None, reason=reason, prefix=pre, scope=scope,
+        audit.record(store, "verify_fail", k.id if k else None, reason=reason, prefix=pre,
+                     scope=_safe_ip(scope) if scope is not None else None,
                      ip=_safe_ip(ip) if ip is not None else None)
         store.save()
         raise VerifyFailed(reason)
     if record_use:
         k.last_used_at = iso(now()); store.put(k)
-        audit.record(store, "verify_ok", k.id, scope=scope, ip=ip)
+        audit.record(store, "verify_ok", k.id, scope=_safe_ip(scope) if scope is not None else None,
+                     ip=_safe_ip(ip) if ip is not None else None)
         store.save()
     return k
 
