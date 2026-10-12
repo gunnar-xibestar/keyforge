@@ -115,3 +115,43 @@ class TestLockingFollowups(unittest.TestCase):
 
     def test_purge_only_confirmed(self):
         self.assertEqual(svc.purge(Store(self.path), include_revoked=True, only_ids=set()), [])
+
+class TestLockingRound3(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.TemporaryDirectory()
+    def tearDown(self): self.d.cleanup()
+
+    def test_prompt_shows_id_and_aborts_if_ref_changes(self):
+        path = os.path.join(self.d.name, "s.json")
+        st = Store(path); k, _ = svc.create(st, name="svc", owner="o"); st.save()
+        prompts = []
+        def fake_input(p):
+            prompts.append(p)
+            other = Store(path, lock=True)   # swap: delete key, create another with the same name
+            other.delete(k.id); svc.create(other, name="svc", owner="o"); other.save(); other.close()
+            return "y"
+        with mock.patch("sys.stdin.isatty", return_value=True), mock.patch("builtins.input", fake_input), \
+             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            rc = cli.main(["--store", path, "revoke", "svc"])
+        self.assertIn(k.id, prompts[0]); self.assertEqual(rc, 6)
+        self.assertTrue(all(x.status == "active" for x in Store(path).all()))
+
+    def test_existing_keyforge_dir_tightened(self):
+        kd = os.path.join(self.d.name, ".keyforge"); os.mkdir(kd); os.chmod(kd, 0o755)
+        Store(os.path.join(kd, "store.json")).save()
+        self.assertEqual(os.stat(kd).st_mode & 0o777, 0o700)
+
+    def test_other_dirs_not_chmodded(self):
+        od = os.path.join(self.d.name, "shared"); os.mkdir(od); os.chmod(od, 0o755)
+        Store(os.path.join(od, "s.json")).save()
+        self.assertEqual(os.stat(od).st_mode & 0o777, 0o755)
+
+    def test_store_locked_exit_code(self):
+        path = os.path.join(self.d.name, "s.json")
+        holder = Store(path, lock=True)
+        try:
+            with mock.patch.dict(os.environ, {"KEYFORGE_LOCK_TIMEOUT": "0.2"}), \
+                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(cli.main(["--store", path, "list"]), 8)
+        finally:
+            holder.close()
