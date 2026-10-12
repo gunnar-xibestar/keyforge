@@ -19,12 +19,21 @@ def _out(args, data, text=None):
     elif text is not None:
         print(text)
 
-def _confirm(args, msg):
+def _confirm(args, msg, st=None):
+    """Ask for confirmation. The store lock is NOT held while waiting for the user: it is
+    released before the prompt, then re-acquired and the store reloaded afterwards, so callers
+    must (and do) read key state only after _confirm returns."""
     if args.dry_run or args.yes:
         return
     if not sys.stdin.isatty():
         raise Aborted(f"{msg} - refusing without --yes (non-interactive)")
-    if input(f"{msg} [y/N] ").strip().lower() not in ("y", "yes"):
+    held = st is not None and st.locked
+    if held: st.release()
+    try:
+        ans = input(f"{msg} [y/N] ").strip().lower()
+    finally:
+        if held: st.acquire(); st._load()
+    if ans not in ("y", "yes"):
         raise Aborted("aborted by user")
 
 def _table(rows, cols):
@@ -84,7 +93,7 @@ def cmd_verify(a, st):
          f"VALID: {k.id} ({k.name}) status={k.effective_status()}")
 
 def cmd_rotate(a, st):
-    _confirm(a, f"Rotate key {a.key}?")
+    _confirm(a, f"Rotate key {a.key}?", st)
     old, new, full, gu = svc.rotate(st, a.key, a.grace_period, a.dry_run)
     if a.dry_run:
         _out(a, {"dry_run": True, "old": old.id, "grace_until": iso(gu)},
@@ -95,7 +104,7 @@ def cmd_rotate(a, st):
 
 def _status_cmd(status, verb):
     def run(a, st):
-        if status == "revoked": _confirm(a, f"Revoke key {a.key}? This cannot be undone.")
+        if status == "revoked": _confirm(a, f"Revoke key {a.key}? This cannot be undone.", st)
         k = svc.set_status(st, a.key, status, getattr(a, "reason", None), a.dry_run)
         if not a.dry_run: st.save()
         pre = "[dry-run] would " + verb.lower().rstrip("d") if a.dry_run else verb
@@ -135,7 +144,7 @@ def cmd_policy(a, st):
         p = pol.effective(st)
         _out(a, p, "\n".join(f"{k:<24} {v}" for k, v in p.items())); return
     if a.policy_cmd == "reset":
-        _confirm(a, "Reset org policy to defaults?")
+        _confirm(a, "Reset org policy to defaults?", st)
         if not a.dry_run: st.data["policy"] = {}; audit.record(st, "policy_reset"); st.save()
         _out(a, {"reset": True, "dry_run": a.dry_run}, "policy reset" + (" (dry-run)" if a.dry_run else "")); return
     if a.field not in POLICY_KEYS:
@@ -170,8 +179,9 @@ def cmd_import(a, st):
 def cmd_purge(a, st):
     victims = svc.purge(st, a.older_than, a.include_revoked, dry_run=True)
     if victims and not a.dry_run:
-        _confirm(a, f"Permanently delete {len(victims)} key record(s)?")
-        svc.purge(st, a.older_than, a.include_revoked); st.save()
+        _confirm(a, f"Permanently delete {len(victims)} key record(s)?", st)
+        # store was reloaded after the prompt: delete only confirmed keys that are still eligible
+        victims = svc.purge(st, a.older_than, a.include_revoked, only_ids={k.id for k in victims}); st.save()
     _out(a, {"dry_run": a.dry_run, "purged": [k.id for k in victims]},
          f"{'[dry-run] would purge' if a.dry_run else 'purged'} {len(victims)} key(s)" +
          "".join(f"\n  {k.id} {k.name} ({k.effective_status()})" for k in victims))

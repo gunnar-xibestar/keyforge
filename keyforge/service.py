@@ -93,7 +93,7 @@ def verify(store, secret, scope=None, ip=None, record_use=True) -> ApiKey:
         raise VerifyFailed(reason)
     if record_use:
         ts = iso(now()); k.last_used_at = ts
-        _commit_verify(store, (k.id, ts), "verify_ok", k.id, scope=scope, ip=ip)
+        _commit_verify(store, (k.id, ts, k.hash), "verify_ok", k.id, scope=scope, ip=ip)
     return k
 
 def _commit_verify(store, last_used, action, key_id, **details):
@@ -108,8 +108,17 @@ def _commit_verify(store, last_used, action, key_id, **details):
         store.acquire()
     try:
         store._load()
-        if last_used and last_used[0] in store.data["keys"]:
-            store.data["keys"][last_used[0]]["last_used_at"] = last_used[1]
+        if last_used:
+            kid, ts, h = last_used
+            cur = store.data["keys"].get(kid)
+            st = ApiKey.from_dict(cur).effective_status() if cur else "deleted"
+            if cur is None or cur.get("hash") != h or st not in ("active", "grace"):
+                # state changed between our read and the lock: re-decide on fresh data
+                reason = f"key is {st}" if cur is None or cur.get("hash") == h else "key changed during verification"
+                audit.record(store, "verify_fail", kid, reason=reason, **details)
+                store.save()
+                raise VerifyFailed(reason)
+            cur["last_used_at"] = ts
         audit.record(store, action, key_id, **details)
         store.save()
     finally:
@@ -183,7 +192,7 @@ def update(store, ref, add_scopes=(), remove_scopes=(), set_labels=None, unset_l
         audit.record(store, "update", k.id, changes=changes)
     return k
 
-def purge(store, older_than=None, include_revoked=False, dry_run=False) -> list[ApiKey]:
+def purge(store, older_than=None, include_revoked=False, dry_run=False, only_ids=None) -> list[ApiKey]:
     cutoff = now() - (parse_duration(older_than) if older_than else parse_duration("0s"))
     victims = []
     for k in store.all():
@@ -194,6 +203,8 @@ def purge(store, older_than=None, include_revoked=False, dry_run=False) -> list[
             victims.append(k)
         elif include_revoked and st == "revoked" and parse_iso(k.revoked_at) <= cutoff:
             victims.append(k)
+    if only_ids is not None:
+        victims = [k for k in victims if k.id in only_ids]
     if not dry_run:
         for k in victims:
             store.delete(k.id)
