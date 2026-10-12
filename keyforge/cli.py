@@ -113,6 +113,13 @@ def cmd_update(a, st):
     _out(a, {"dry_run": a.dry_run, "key": k.public()}, ("[dry-run] would update:\n" if a.dry_run else "Updated:\n") + _key_text(k))
 
 def cmd_audit(a, st):
+    if a.verify:
+        r = audit.verify_chain(st.audit_log)
+        text = (f"audit chain OK: {r['checked']} chained event(s), head {r['head']}" if r["ok"]
+                else f"AUDIT CHAIN BROKEN: {r['error']}")
+        if r["ok"] and r["legacy"]: text += f" ({r['legacy']} legacy unchained event(s) not protected)"
+        _out(a, r, text)
+        return EXIT_OK if r["ok"] else EXIT_ERR
     key_id = st.get(a.key).id if a.key else None
     since = None
     if a.since:
@@ -125,7 +132,7 @@ def cmd_audit(a, st):
     if a.json:
         print(json.dumps(evs, indent=2)); return
     rows = [{**e, "details": json.dumps(e["details"], sort_keys=True)} for e in evs]
-    print(_table(rows, ["ts", "actor", "action", "key_id", "details"]) if rows else "(no events)")
+    print(_table(rows, ["ts", "actor", "os_user", "action", "key_id", "details"]) if rows else "(no events)")
 
 POLICY_KEYS = {"max_ttl": str, "require_expiry": "bool", "allowed_scopes": list, "required_labels": list,
                "max_rate_limit": int, "live_requires_ip_allow": "bool", "default_grace_period": str}
@@ -238,6 +245,7 @@ def build_parser():
     au = add("audit", cmd_audit, "query the audit log")
     au.add_argument("--key"); au.add_argument("--action"); au.add_argument("--since", help="duration (24h) or ISO time")
     au.add_argument("--limit", type=int); au.add_argument("--export", metavar="FILE", help="write JSON to file")
+    au.add_argument("--verify", action="store_true", help="verify the audit hash chain (exit 1 if tampered)")
 
     po = add("policy", cmd_policy, "show/set org policy")
     psub = po.add_subparsers(dest="policy_cmd")
