@@ -6,10 +6,13 @@ read-modify-write cycle is therefore serialized across processes, so a concurren
 save a stale snapshot over a ``revoke``. The CLI always opens the store this way.
 """
 from __future__ import annotations
-import fcntl, json, os, tempfile
+import fcntl, json, os, tempfile, time
 from pathlib import Path
 from .models import ApiKey
 from .errors import NotFound, KeyForgeError
+
+class StoreLocked(KeyForgeError):
+    exit_code = 1
 
 DEFAULT_STORE = "~/.keyforge/store.json"
 
@@ -34,16 +37,30 @@ class Store:
     def locked(self) -> bool:
         return self._lock_fd is not None
 
-    def acquire(self) -> None:
+    def acquire(self, timeout: float | None = None) -> None:
+        """Take the exclusive lock, polling with LOCK_NB until ``timeout`` seconds
+        (default $KEYFORGE_LOCK_TIMEOUT or 30s). Raises StoreLocked on timeout."""
         if self._lock_fd is not None:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        if timeout is None:
+            timeout = float(os.environ.get("KEYFORGE_LOCK_TIMEOUT", "30"))
+        self._mkdirs()
+        fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), 0o600)
+        deadline = time.monotonic() + timeout
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise StoreLocked(f"store {self.path} is locked by another process (waited {timeout:g}s)")
+                    time.sleep(0.05)
         except BaseException:
             os.close(fd); raise
         self._lock_fd = fd
+
+    def _mkdirs(self) -> None:
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     def release(self) -> None:
         if self._lock_fd is not None:
@@ -81,7 +98,7 @@ class Store:
         if not held:
             self.acquire()
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._mkdirs()
             fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".kf-")
             try:
                 with os.fdopen(fd, "w") as f:
@@ -89,6 +106,9 @@ class Store:
                     f.flush(); os.fsync(f.fileno())
                 os.chmod(tmp, 0o600)
                 os.replace(tmp, self.path)
+                dfd = os.open(self.path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                try: os.fsync(dfd)  # make the rename durable
+                finally: os.close(dfd)
             except BaseException:
                 if os.path.exists(tmp): os.unlink(tmp)
                 raise
