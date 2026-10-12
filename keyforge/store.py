@@ -12,7 +12,7 @@ from .models import ApiKey
 from .errors import NotFound, KeyForgeError
 
 class StoreLocked(KeyForgeError):
-    exit_code = 1
+    exit_code = 8
 
 DEFAULT_STORE = "~/.keyforge/store.json"
 
@@ -60,7 +60,14 @@ class Store:
         self._lock_fd = fd
 
     def _mkdirs(self) -> None:
-        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        d = self.path.parent
+        d.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # Tighten a pre-existing KeyForge-owned dir (e.g. ~/.keyforge left at 0755). Only dirs named
+        # ".keyforge" are touched, so --store /tmp/x.json never chmods a shared directory.
+        if d.name == ".keyforge":
+            st = os.stat(d)
+            if st.st_uid == os.getuid() and st.st_mode & 0o077:
+                os.chmod(d, 0o700)
 
     def release(self) -> None:
         if self._lock_fd is not None:
