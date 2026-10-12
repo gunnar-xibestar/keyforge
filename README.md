@@ -1,6 +1,6 @@
 # KeyForge: mock enterprise API key manager
 
-> ⚠️ **MOCK / DEMO ONLY. NOT FOR PRODUCTION.** It has no real secret storage, no HSM/KMS, no locking for concurrent writers, and no authN/authZ on the CLI itself.
+> ⚠️ **MOCK / DEMO ONLY. NOT FOR PRODUCTION.** It has no real secret storage, no HSM/KMS, and no authN/authZ on the CLI itself.
 
 Pure-stdlib Python 3.10+. Keys look like `kf_<env>_<32 random chars>`. The full secret is printed **once** at create/rotate time. Only a salted PBKDF2-HMAC-SHA256 hash plus the display prefix (`kf_live_AbCd1234`) is stored.
 

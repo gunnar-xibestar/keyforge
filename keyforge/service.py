@@ -88,14 +88,33 @@ def verify(store, secret, scope=None, ip=None, record_use=True) -> ApiKey:
         else:
             reason = None
     if reason:
-        audit.record(store, "verify_fail", k.id if k else None, reason=reason, prefix=pre, scope=scope, ip=ip)
-        store.save()
+        _commit_verify(store, None, "verify_fail", k.id if k else None,
+                       reason=reason, prefix=pre, scope=scope, ip=ip)
         raise VerifyFailed(reason)
     if record_use:
-        k.last_used_at = iso(now()); store.put(k)
-        audit.record(store, "verify_ok", k.id, scope=scope, ip=ip)
-        store.save()
+        ts = iso(now()); k.last_used_at = ts
+        _commit_verify(store, (k.id, ts), "verify_ok", k.id, scope=scope, ip=ip)
     return k
+
+def _commit_verify(store, last_used, action, key_id, **details):
+    """Persist verify side effects without clobbering concurrent writes.
+
+    Under the store lock, re-read the on-disk state and apply *only* the verify delta
+    (``last_used_at`` + one audit event) to it, instead of writing back the in-memory snapshot
+    that was read before verification. A revoke that landed in between is thereby preserved.
+    """
+    held = store.locked
+    if not held:
+        store.acquire()
+    try:
+        store._load()
+        if last_used and last_used[0] in store.data["keys"]:
+            store.data["keys"][last_used[0]]["last_used_at"] = last_used[1]
+        audit.record(store, action, key_id, **details)
+        store.save()
+    finally:
+        if not held:
+            store.release()
 
 def rotate(store, ref, grace_period=None, dry_run=False):
     old = store.get(ref)
