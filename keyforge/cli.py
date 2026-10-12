@@ -6,7 +6,7 @@ from .errors import KeyForgeError, Aborted, ValidationError
 from .models import parse_duration, now, parse_iso, iso
 from .store import Store
 
-EXIT_OK, EXIT_ERR, EXIT_USAGE, EXIT_NOTFOUND, EXIT_VERIFY, EXIT_POLICY, EXIT_ABORT = 0, 1, 2, 3, 4, 5, 6
+EXIT_OK, EXIT_ERR, EXIT_USAGE, EXIT_NOTFOUND, EXIT_VERIFY, EXIT_POLICY, EXIT_ABORT, EXIT_TAMPER = 0, 1, 2, 3, 4, 5, 6, 7
 
 def _kv(s):
     if "=" not in s:
@@ -114,12 +114,13 @@ def cmd_update(a, st):
 
 def cmd_audit(a, st):
     if a.verify:
-        r = audit.verify_chain(st.audit_log)
-        text = (f"audit chain OK: {r['checked']} chained event(s), head {r['head']}" if r["ok"]
+        r = audit.verify_chain(st.audit_log, st.data.get("audit_meta"), audit.hmac_key())
+        text = (f"audit chain OK: {r['checked']} chained event(s), count {r['count']}, head {r['head']}"
+                + (", MAC verified" if r["mac_verified"] else "") if r["ok"]
                 else f"AUDIT CHAIN BROKEN: {r['error']}")
         if r["ok"] and r["legacy"]: text += f" ({r['legacy']} legacy unchained event(s) not protected)"
         _out(a, r, text)
-        return EXIT_OK if r["ok"] else EXIT_ERR
+        return EXIT_OK if r["ok"] else EXIT_TAMPER
     key_id = st.get(a.key).id if a.key else None
     since = None
     if a.since:
@@ -199,7 +200,7 @@ def build_parser():
     sub_common.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="JSON output")
     p = argparse.ArgumentParser(prog="keyforge", parents=[common],
         description=f"{MOCK_BANNER}. Manage mock enterprise API keys.",
-        epilog="Exit codes: 0 ok, 1 error, 2 usage/validation, 3 not found, 4 verify failed, 5 policy violation, 6 aborted")
+        epilog="Exit codes: 0 ok, 1 error, 2 usage/validation, 3 not found, 4 verify failed, 5 policy violation, 6 aborted, 7 audit log tampered")
     p.add_argument("--version", action="version", version=f"keyforge {__version__} (MOCK)")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
     def add(name, fn, help, parents=()):
@@ -245,7 +246,7 @@ def build_parser():
     au = add("audit", cmd_audit, "query the audit log")
     au.add_argument("--key"); au.add_argument("--action"); au.add_argument("--since", help="duration (24h) or ISO time")
     au.add_argument("--limit", type=int); au.add_argument("--export", metavar="FILE", help="write JSON to file")
-    au.add_argument("--verify", action="store_true", help="verify the audit hash chain (exit 1 if tampered)")
+    au.add_argument("--verify", action="store_true", help="verify the audit hash chain (exit 7 if tampered)")
 
     po = add("policy", cmd_policy, "show/set org policy")
     psub = po.add_subparsers(dest="policy_cmd")
