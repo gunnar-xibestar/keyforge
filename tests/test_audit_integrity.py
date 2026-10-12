@@ -50,7 +50,7 @@ class TestAuditIntegrity(unittest.TestCase):
     def test_legacy_prefix_allowed_but_not_after_chain(self):
         legacy = [{"ts": "2026-01-01T00:00:00Z", "actor": "x", "action": "create", "key_id": None, "details": {}}]
         st = Store(os.path.join(self.d.name, "l.json")); st.data["audit"] = list(legacy); st.data.pop("audit_meta")
-        audit.record(st, "export")
+        audit.adopt_legacy(st)
         r = audit.verify_chain(st.audit_log, st.data['audit_meta']); self.assertTrue(r["ok"]); self.assertEqual(r["legacy"], 1)
         st.audit_log.append(dict(legacy[0])); st.data["audit_meta"]["count"] += 1
         self.assertFalse(audit.verify_chain(st.audit_log, st.data['audit_meta'])["ok"])
@@ -85,7 +85,7 @@ class TestAuditFollowups(unittest.TestCase):
         legacy = {"ts": "2026-01-01T00:00:00Z", "actor": "x", "action": "create", "key_id": None, "details": {}}
         st = Store(os.path.join(self.d.name, "l.json")); st.data["audit"] = [dict(legacy), dict(legacy)]
         st.data.pop("audit_meta")  # simulate a store written before chaining existed
-        audit.record(st, "export")
+        audit.adopt_legacy(st)
         self.assertEqual(st.data["audit_meta"]["legacy"], 2)
         self.assertTrue(audit.verify_chain(st.audit_log, st.data["audit_meta"])["ok"])
         del st.audit_log[0]; st.data["audit_meta"]["count"] -= 1   # drop a legacy event
@@ -190,6 +190,38 @@ class TestAuditRound3(unittest.TestCase):
             self.assertEqual(rc, 1); self.assertIn("unusable", err)
         ev = Store(self.path).audit_log[-1]; self.assertIn("hmac_error", ev)
         self.assertTrue(audit.verify_chain(Store(self.path).audit_log, Store(self.path).data["audit_meta"])["ok"])
+
+class TestAuditRound4(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.TemporaryDirectory(); self.path = os.path.join(self.d.name, "s.json")
+    def tearDown(self): self.d.cleanup()
+
+    def _strip(self):
+        with open(self.path) as f: data = json.load(f)
+        del data["audit_meta"]
+        for e in data["audit"]:
+            e.pop("hash", None); e.pop("prev_hash", None)
+        with open(self.path, "w") as f: json.dump(data, f)
+
+    def test_repro_write_after_strip_does_not_bless_log(self):
+        rc, out, _ = run("--store", self.path, "--json", "create", "--name", "n", "--owner", "o")
+        d = json.loads(out); kid = d["key"]["id"]
+        self._strip()
+        self.assertEqual(run("--store", self.path, "verify", "kf_test_bogus0000000")[0], 4)   # a write
+        with open(self.path) as f: self.assertNotIn("audit_meta", json.load(f))
+        self.assertEqual(run("--store", self.path, "audit", "--verify")[0], 7)
+        # revoke still persists, still flagged, verify still 7
+        self.assertEqual(run("--store", self.path, "revoke", kid, "--yes")[0], 0)
+        st = Store(self.path); self.assertEqual(st.get(kid).status, "revoked")
+        self.assertIn("chain_error", st.audit_log[-1]); self.assertEqual(st.audit_log[-1]["action"], "revoke")
+        self.assertEqual(run("--store", self.path, "audit", "--verify")[0], 7)
+        # only an explicit adoption restarts the chain
+        self.assertEqual(run("--store", self.path, "audit", "--adopt-legacy")[0], 0)
+        self.assertEqual(run("--store", self.path, "audit", "--verify")[0], 0)
+
+    def test_empty_log_auto_meta(self):
+        st = Store(self.path); st.data.pop("audit_meta"); audit.record(st, "export")
+        self.assertTrue(audit.verify_chain(st.audit_log, st.data["audit_meta"])["ok"])
 
 if __name__ == "__main__":
     unittest.main()
