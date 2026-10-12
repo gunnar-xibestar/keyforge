@@ -42,9 +42,9 @@ class TestCLI(Base):
 
     def test_verify_scope_ip(self):
         d = self.create("--scope", "read:*", "--ip-allow", "10.0.0.0/8"); s = d["secret"]
-        self.assertEqual(run("verify", s)[0], 0)
+        self.assertEqual(run("verify", s)[0], 4)  # allow list set but no --ip: fail closed
         self.assertEqual(run("verify", s, "--scope", "read:packets", "--ip", "10.1.2.3")[0], 0)
-        self.assertEqual(run("verify", s, "--scope", "write:battery")[0], 4)
+        self.assertEqual(run("verify", s, "--scope", "write:battery", "--ip", "10.1.2.3")[0], 4)
         self.assertEqual(run("verify", s, "--ip", "192.168.1.1")[0], 4)
         self.assertEqual(run("verify", "kf_test_nope12345678")[0], 4)
 
