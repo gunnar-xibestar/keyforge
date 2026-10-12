@@ -58,3 +58,8 @@ class Store:
     @property
     def audit_log(self) -> list:
         return self.data.setdefault("audit", [])
+
+    @property
+    def revoked_hashes(self) -> list:
+        """Hashes/prefixes of every key ever revoked; never purged."""
+        return self.data.setdefault("revoked_hashes", [])
