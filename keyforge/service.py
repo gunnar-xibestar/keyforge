@@ -78,6 +78,10 @@ def _safe_ip(ip, limit=64) -> str:
     r = repr(ip)
     return r if len(r) <= limit else r[:limit] + "...'"
 
+def _trunc(v, limit=64):
+    """Raw untrusted value for structured audit details: kept as-is (JSON escapes it), only truncated."""
+    return None if v is None else str(v)[:limit]
+
 def _ip_allowed(ip, allow) -> bool:
     """True only if ip parses and falls in a valid allow-list entry. Never raises."""
     try:
@@ -116,14 +120,14 @@ def verify(store, secret, scope=None, ip=None, record_use=True) -> ApiKey:
             reason = None
     if reason:
         audit.record(store, "verify_fail", k.id if k else None, reason=reason, prefix=pre,
-                     scope=_safe_ip(scope) if scope is not None else None,
-                     ip=_safe_ip(ip) if ip is not None else None)
+                     scope=_trunc(scope),
+                     ip=_trunc(ip))
         store.save()
         raise VerifyFailed(reason)
     if record_use:
         k.last_used_at = iso(now()); store.put(k)
-        audit.record(store, "verify_ok", k.id, scope=_safe_ip(scope) if scope is not None else None,
-                     ip=_safe_ip(ip) if ip is not None else None)
+        audit.record(store, "verify_ok", k.id, scope=_trunc(scope),
+                     ip=_trunc(ip))
         store.save()
     return k
 
