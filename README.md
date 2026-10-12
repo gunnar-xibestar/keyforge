@@ -1,6 +1,6 @@
 # KeyForge: mock enterprise API key manager
 
-> ⚠️ **MOCK / DEMO ONLY. NOT FOR PRODUCTION.** It has no real secret storage, no HSM/KMS, no locking for concurrent writers, and no authN/authZ on the CLI itself.
+> ⚠️ **MOCK / DEMO ONLY. NOT FOR PRODUCTION.** It has no real secret storage, no HSM/KMS, and no authN/authZ on the CLI itself.
 
 Pure-stdlib Python 3.10+. Keys look like `kf_<env>_<32 random chars>`. The full secret is printed **once** at create/rotate time. Only a salted PBKDF2-HMAC-SHA256 hash plus the display prefix (`kf_live_AbCd1234`) is stored.
 
@@ -32,10 +32,16 @@ Scopes take the form `resource:action`, and grants may be globs (`read:*`).
 Statuses: active, suspended, revoked, expired, grace (rotated, old key still valid), rotated.
 
 ## Exit codes
-0 ok · 1 error · 2 usage/validation · 3 not found · 4 verification failed · 5 policy violation · 6 aborted (no confirmation) · 7 audit log tampered (`audit --verify`)
+0 ok · 1 error · 2 usage/validation · 3 not found · 4 verification failed · 5 policy violation · 6 aborted (no confirmation) · 7 audit log tampered (`audit --verify`) · 8 store locked (lock wait timed out)
 
 ## Tests
     python -m unittest discover -s tests -v     # or: pytest
+
+## Release notes
+
+### Unreleased: import hardening
+- The store now keeps `revoked_hashes`, a list that `purge` never clears. It holds the id, prefix and hash of every key that was revoked, or rotated and then purged. `import` rejects any record that matches an entry on this list, whatever the record's status. The same applies to another existing key's hash or prefix. `--allow-unrevoke` overrides this. `update` (extending or clearing expiry) and `resume` refuse to revive a key whose credential is on the list.
+- **Known gap:** keys revoked or rotated and then **purged before this change** were never recorded, so these checks can't catch them. If you need protection for them, restore them from an older export as revoked records. Matching ids are allowed.
 
 ## Audit integrity
 - `audit --verify` checks the hash chain and `audit_meta` (legacy count, event count, head). It exits 7 on any mismatch, including missing metadata.
