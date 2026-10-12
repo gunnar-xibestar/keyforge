@@ -261,8 +261,11 @@ def main(argv=None) -> int:
     for f in ("dry_run", "yes"):
         if not hasattr(args, f): setattr(args, f, False)
     try:
-        st = Store(args.store)
-        rc = args.func(args, st)
+        st = Store(args.store, lock=True)  # exclusive lock held for the whole read-modify-write
+        try:
+            rc = args.func(args, st)
+        finally:
+            st.close()
         return rc or EXIT_OK
     except KeyForgeError as e:
         if args.json: print(json.dumps({"error": str(e), "exit_code": e.exit_code}))
