@@ -183,7 +183,7 @@ def cmd_export(a, st):
 
 def cmd_import(a, st):
     with (sys.stdin if a.file == "-" else open(a.file)) as f: data = json.load(f)
-    res = svc.import_(st, data, a.overwrite, a.dry_run)
+    res = svc.import_(st, data, a.overwrite, a.dry_run, allow_unrevoke=a.allow_unrevoke)
     if not a.dry_run: st.save()
     _out(a, {**res, "dry_run": a.dry_run},
          f"{'[dry-run] ' if a.dry_run else ''}added={len(res['added'])} overwritten={len(res['overwritten'])} skipped={len(res['skipped'])}")
@@ -272,6 +272,8 @@ def build_parser():
     ex.add_argument("-o", "--output"); ex.add_argument("--include-audit", action="store_true")
     im = add("import", cmd_import, "import an export file", [dry])
     im.add_argument("file"); im.add_argument("--overwrite", action="store_true")
+    im.add_argument("--allow-unrevoke", action="store_true",
+                    help="with --overwrite, allow a non-revoked record to replace a revoked key")
     pu = add("purge", cmd_purge, "delete expired / post-grace rotated keys", [destr])
     pu.add_argument("--older-than", help="only purge if expired longer than this (e.g. 7d)")
     pu.add_argument("--include-revoked", action="store_true")
