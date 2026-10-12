@@ -3,7 +3,7 @@ from __future__ import annotations
 import ipaddress, fnmatch
 from datetime import datetime
 from . import crypto, audit, policy as pol
-from .errors import KeyForgeError, VerifyFailed, ValidationError
+from .errors import KeyForgeError, VerifyFailed, ValidationError, PolicyViolation
 from .models import ApiKey, ENVS, SCOPE_RE, now, iso, parse_iso, parse_duration
 
 def _validate(scopes, ip_allow, env=None):
@@ -188,21 +188,115 @@ def export(store, include_audit=False) -> dict:
         d["audit"] = store.audit_log
     return d
 
-def import_(store, data, overwrite=False, dry_run=False) -> dict:
-    if data.get("format") != "keyforge-export":
+_KEY_FIELDS = {  # field -> allowed types (None means optional)
+    "id": (str,), "name": (str,), "prefix": (str,), "env": (str,), "owner": (str,),
+    "team": (str, type(None)), "scopes": (list,), "hash": (dict,), "created_at": (str,),
+    "expires_at": (str, type(None)), "description": (str, type(None)),
+    "rate_limit": (int, type(None)), "ip_allow": (list,), "labels": (dict,), "status": (str,),
+    "revoked_reason": (str, type(None)), "revoked_at": (str, type(None)),
+    "rotated_to": (str, type(None)), "rotated_from": (str, type(None)),
+    "grace_until": (str, type(None)), "last_used_at": (str, type(None)),
+}
+_REQUIRED = ("id", "name", "prefix", "env", "owner", "scopes", "hash", "created_at")
+_STATUSES = ("active", "suspended", "revoked", "rotated")
+_ID_RE = __import__("re").compile(r"^key_[0-9a-f]{12}$")
+_HEX_RE = __import__("re").compile(r"^[0-9a-f]+$")
+
+def _validate_import_record(store, d, idx) -> dict:
+    """Validate one imported key record; return a normalized dict or raise ValidationError/PolicyViolation."""
+    where = f"keys[{idx}]"
+    if not isinstance(d, dict):
+        raise ValidationError(f"{where}: record must be an object")
+    unknown = set(d) - set(_KEY_FIELDS)
+    if unknown:
+        raise ValidationError(f"{where}: unknown field(s) {sorted(unknown)}")
+    for f in _REQUIRED:
+        if f not in d:
+            raise ValidationError(f"{where}: missing required field {f!r}")
+    for f, v in d.items():
+        if not isinstance(v, _KEY_FIELDS[f]) or (f == "rate_limit" and isinstance(v, bool)):
+            raise ValidationError(f"{where}: field {f!r} has wrong type")
+    where = f"{where} ({d['id']})"
+    if not _ID_RE.match(d["id"]):
+        raise ValidationError(f"{where}: malformed id")
+    status = d.get("status", "active")
+    if status not in _STATUSES:
+        raise ValidationError(f"{where}: invalid status {status!r}")
+    if not all(isinstance(x, str) for x in d["scopes"]) or not all(isinstance(x, str) for x in d.get("ip_allow", [])):
+        raise ValidationError(f"{where}: scopes and ip_allow must be lists of strings")
+    if not all(isinstance(a, str) and isinstance(b, str) for a, b in d.get("labels", {}).items()):
+        raise ValidationError(f"{where}: labels must map strings to strings")
+    try:
+        _validate(d["scopes"], d.get("ip_allow", []), d["env"])
+    except ValidationError as e:
+        raise ValidationError(f"{where}: {e}")
+    if crypto.prefix_of(d["prefix"]) != d["prefix"] or not d["prefix"].startswith(f"kf_{d['env']}_"):
+        raise ValidationError(f"{where}: prefix does not match env")
+    h = d["hash"]
+    if (set(h) != {"algo", "iterations", "salt", "hash"} or h["algo"] != "pbkdf2_sha256"
+            or not isinstance(h["iterations"], int) or isinstance(h["iterations"], bool) or h["iterations"] < 1
+            or not isinstance(h["salt"], str) or not isinstance(h["hash"], str)
+            or not _HEX_RE.match(h["salt"]) or len(h["hash"]) != 64 or not _HEX_RE.match(h["hash"])):
+        raise ValidationError(f"{where}: malformed hash record")
+    if d.get("rate_limit") is not None and d["rate_limit"] <= 0:
+        raise ValidationError(f"{where}: rate limit must be positive")
+    try:
+        for f in ("created_at", "expires_at", "revoked_at", "grace_until", "last_used_at"):
+            parse_iso(d.get(f))
+    except ValueError:
+        raise ValidationError(f"{where}: invalid timestamp in {f!r}")
+    k = ApiKey.from_dict(d)
+    if status == "revoked" and not k.revoked_at:
+        raise ValidationError(f"{where}: revoked record missing revoked_at")
+    if status == "rotated" and not k.grace_until:
+        raise ValidationError(f"{where}: rotated record missing grace_until")
+    # Enforce org policy for any record that can still authenticate (active/grace/suspended).
+    if k.effective_status() not in ("revoked", "expired", "rotated"):
+        try:
+            pol.check(pol.effective(store), env=k.env, scopes=k.scopes, labels=k.labels,
+                      expires_at=parse_iso(k.expires_at), rate_limit=k.rate_limit, ip_allow=k.ip_allow)
+        except PolicyViolation as e:
+            raise PolicyViolation(f"{where}: {e}")
+    return k.to_dict()
+
+def import_(store, data, overwrite=False, dry_run=False, allow_unrevoke=False) -> dict:
+    """Import keys from an export file.
+
+    The whole file is validated before anything is written: a single bad record aborts the
+    import. With ``overwrite``, an existing *revoked* key is never replaced by a non-revoked
+    record unless ``allow_unrevoke`` is also given (re-activating a revoked key is a deliberate act).
+    """
+    if not isinstance(data, dict) or data.get("format") != "keyforge-export":
         raise ValidationError("not a keyforge export file")
+    if data.get("version") != 1:
+        raise ValidationError(f"unsupported export version {data.get('version')!r}")
+    keys = data.get("keys", [])
+    if not isinstance(keys, list):
+        raise ValidationError("'keys' must be a list")
     res = {"added": [], "skipped": [], "overwritten": []}
-    for d in data.get("keys", []):
-        k = d["id"]
+    staged, seen = [], set()
+    for idx, d in enumerate(keys):
+        rec = _validate_import_record(store, d, idx)
+        k = rec["id"]
+        if k in seen:
+            raise ValidationError(f"duplicate key id {k} in import file")
+        seen.add(k)
         if k in store.data["keys"]:
             if not overwrite:
                 res["skipped"].append(k); continue
+            existing = ApiKey.from_dict(store.data["keys"][k])
+            if existing.status == "revoked" and rec["status"] != "revoked" and not allow_unrevoke:
+                raise KeyForgeError(f"refusing to overwrite revoked key {k} with a non-revoked record "
+                                    "(use --allow-unrevoke to force)")
             res["overwritten"].append(k)
         else:
             res["added"].append(k)
-        if not dry_run:
-            store.data["keys"][k] = d
+        staged.append(rec)
     if not dry_run:
+        for rec in staged:
+            store.data["keys"][rec["id"]] = rec
         audit.record(store, "import", None, added=len(res["added"]),
-                     overwritten=len(res["overwritten"]), skipped=len(res["skipped"]))
+                     overwritten=len(res["overwritten"]), skipped=len(res["skipped"]),
+                     unrevoked=[r["id"] for r in staged if allow_unrevoke and r["status"] != "revoked"
+                                and r["id"] in res["overwritten"]] or None)
     return res
