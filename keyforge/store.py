@@ -97,6 +97,8 @@ class Store:
                 raise KeyForgeError(f"corrupt store {self.path}: {e}")
             self.data = {"version": 1, "keys": {}, "audit": [], "policy": {}}
             self.data.update(data)
+        else:  # brand-new store: start the audit chain now, with zero legacy events
+            self.data.setdefault("audit_meta", {"legacy": 0, "count": 0, "head": "0" * 64})
 
     def save(self) -> None:
         """Atomically replace the store file. If this Store does not already hold the lock, the

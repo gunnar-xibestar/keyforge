@@ -6,7 +6,7 @@ from .errors import KeyForgeError, Aborted, ValidationError
 from .models import parse_duration, now, parse_iso, iso
 from .store import Store
 
-EXIT_OK, EXIT_ERR, EXIT_USAGE, EXIT_NOTFOUND, EXIT_VERIFY, EXIT_POLICY, EXIT_ABORT, EXIT_LOCKED = 0, 1, 2, 3, 4, 5, 6, 8
+EXIT_OK, EXIT_ERR, EXIT_USAGE, EXIT_NOTFOUND, EXIT_VERIFY, EXIT_POLICY, EXIT_ABORT, EXIT_TAMPER, EXIT_LOCKED = 0, 1, 2, 3, 4, 5, 6, 7, 8
 
 def _kv(s):
     if "=" not in s:
@@ -134,6 +134,17 @@ def cmd_update(a, st):
     _out(a, {"dry_run": a.dry_run, "key": k.public()}, ("[dry-run] would update:\n" if a.dry_run else "Updated:\n") + _key_text(k))
 
 def cmd_audit(a, st):
+    if a.adopt_legacy:
+        ev = audit.adopt_legacy(st); st.save()
+        _out(a, ev, f"audit chain started; {ev['details']['legacy']} legacy event(s) recorded as unprotected"); return
+    if a.verify:
+        r = audit.verify_chain(st.audit_log, st.data.get("audit_meta"), audit.hmac_key())
+        text = (f"audit chain OK: {r['checked']} chained event(s), count {r['count']}, head {r['head']}"
+                + (", MAC verified" if r["mac_verified"] else "") if r["ok"]
+                else f"AUDIT CHAIN BROKEN: {r['error']}")
+        if r["ok"] and r["legacy"]: text += f" ({r['legacy']} legacy unchained event(s) not protected)"
+        _out(a, r, text)
+        return EXIT_OK if r["ok"] else EXIT_TAMPER
     key_id = st.get(a.key).id if a.key else None
     since = None
     if a.since:
@@ -146,7 +157,7 @@ def cmd_audit(a, st):
     if a.json:
         print(json.dumps(evs, indent=2)); return
     rows = [{**e, "details": json.dumps(e["details"], sort_keys=True)} for e in evs]
-    print(_table(rows, ["ts", "actor", "action", "key_id", "details"]) if rows else "(no events)")
+    print(_table(rows, ["ts", "actor", "os_user", "action", "key_id", "details"]) if rows else "(no events)")
 
 POLICY_KEYS = {"max_ttl": str, "require_expiry": "bool", "allowed_scopes": list, "required_labels": list,
                "max_rate_limit": int, "live_requires_ip_allow": "bool", "default_grace_period": str}
@@ -214,7 +225,7 @@ def build_parser():
     sub_common.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="JSON output")
     p = argparse.ArgumentParser(prog="keyforge", parents=[common],
         description=f"{MOCK_BANNER}. Manage mock enterprise API keys.",
-        epilog="Exit codes: 0 ok, 1 error, 2 usage/validation, 3 not found, 4 verify failed, 5 policy violation, 6 aborted, 8 store locked (timeout)")
+        epilog="Exit codes: 0 ok, 1 error, 2 usage/validation, 3 not found, 4 verify failed, 5 policy violation, 6 aborted, 7 audit log tampered, 8 store locked (timeout)")
     p.add_argument("--version", action="version", version=f"keyforge {__version__} (MOCK)")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
     def add(name, fn, help, parents=()):
@@ -260,6 +271,9 @@ def build_parser():
     au = add("audit", cmd_audit, "query the audit log")
     au.add_argument("--key"); au.add_argument("--action"); au.add_argument("--since", help="duration (24h) or ISO time")
     au.add_argument("--limit", type=int); au.add_argument("--export", metavar="FILE", help="write JSON to file")
+    au.add_argument("--verify", action="store_true", help="verify the audit hash chain (exit 7 if tampered)")
+    au.add_argument("--adopt-legacy", action="store_true",
+                    help="start the hash chain on a pre-chaining store (trusts existing events)")
 
     po = add("policy", cmd_policy, "show/set org policy")
     psub = po.add_subparsers(dest="policy_cmd")

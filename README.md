@@ -32,7 +32,7 @@ Scopes take the form `resource:action`, and grants may be globs (`read:*`).
 Statuses: active, suspended, revoked, expired, grace (rotated, old key still valid), rotated.
 
 ## Exit codes
-0 ok · 1 error · 2 usage/validation · 3 not found · 4 verification failed · 5 policy violation · 6 aborted (no confirmation) · 8 store locked (lock wait timed out)
+0 ok · 1 error · 2 usage/validation · 3 not found · 4 verification failed · 5 policy violation · 6 aborted (no confirmation) · 7 audit log tampered (`audit --verify`) · 8 store locked (lock wait timed out)
 
 ## Tests
     python -m unittest discover -s tests -v     # or: pytest
@@ -42,3 +42,9 @@ Statuses: active, suspended, revoked, expired, grace (rotated, old key still val
 ### Unreleased: import hardening
 - The store now keeps `revoked_hashes`, a list that `purge` never clears. It holds the id, prefix and hash of every key that was revoked, or rotated and then purged. `import` rejects any record that matches an entry on this list, whatever the record's status. The same applies to another existing key's hash or prefix. `--allow-unrevoke` overrides this. `update` (extending or clearing expiry) and `resume` refuse to revive a key whose credential is on the list.
 - **Known gap:** keys revoked or rotated and then **purged before this change** were never recorded, so these checks can't catch them. If you need protection for them, restore them from an older export as revoked records. Matching ids are allowed.
+
+## Audit integrity
+- `audit --verify` checks the hash chain and `audit_meta` (legacy count, event count, head). It exits 7 on any mismatch, including missing metadata.
+- Stores from before hash-chaining have no metadata. Run `audit --adopt-legacy` once to start the chain. Existing events stay unprotected, and the adoption is itself audited.
+- Optional HMAC: set `KEYFORGE_AUDIT_HMAC_KEY_FILE` to a file of at least 16 bytes, mode 0600, kept outside the store. If the key is missing or unusable, writes still succeed (a revoke is never blocked), but the event is stored without a MAC, a warning goes to stderr, and a later keyed `audit --verify` fails.
+- **Recommended:** for real tamper evidence, set `KEYFORGE_AUDIT_HMAC_KEY_FILE`. Without it the chain is unkeyed. Anyone who can write the store file can rebuild a valid-looking chain, or strip it and run `--adopt-legacy`. They just can't do it piecemeal without being noticed. Keep the key where store writers can't read it.
