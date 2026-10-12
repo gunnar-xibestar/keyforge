@@ -134,6 +134,7 @@ def set_status(store, ref, status, reason=None, dry_run=False) -> ApiKey:
     k.status = status
     if status == "revoked":
         k.revoked_reason = reason; k.revoked_at = iso(now())
+        _remember_revoked(store, k)
     store.put(k)
     audit.record(store, {"revoked": "revoke", "suspended": "suspend", "active": "resume"}[status],
                  k.id, reason=reason)
@@ -177,6 +178,8 @@ def purge(store, older_than=None, include_revoked=False, dry_run=False) -> list[
             victims.append(k)
     if not dry_run:
         for k in victims:
+            if k.status == "revoked":
+                _remember_revoked(store, k)  # keep the hash on record after the key is gone
             store.delete(k.id)
             audit.record(store, "purge", k.id, status=k.effective_status())
     return victims
@@ -201,6 +204,29 @@ _REQUIRED = ("id", "name", "prefix", "env", "owner", "scopes", "hash", "created_
 _STATUSES = ("active", "suspended", "revoked", "rotated")
 _ID_RE = __import__("re").compile(r"^key_[0-9a-f]{12}$")
 _HEX_RE = __import__("re").compile(r"^[0-9a-f]+$")
+
+MIN_PBKDF2_ITERS = 1_000
+MAX_PBKDF2_ITERS = 5_000_000
+MIN_SALT_HEX = 32                    # 16 bytes
+MAX_IMPORT_GRACE = "30d"             # grace_until may not be further out than this from now
+
+def _validate_hash_record(h, where):
+    def bad(why): raise ValidationError(f"{where}: malformed hash record ({why})")
+    if not isinstance(h, dict) or set(h) != {"algo", "iterations", "salt", "hash"}:
+        bad("expected exactly algo/iterations/salt/hash")
+    if h["algo"] != "pbkdf2_sha256": bad("unsupported algo")
+    it = h["iterations"]
+    if not isinstance(it, int) or isinstance(it, bool) or not MIN_PBKDF2_ITERS <= it <= MAX_PBKDF2_ITERS:
+        bad(f"iterations must be an int in [{MIN_PBKDF2_ITERS}, {MAX_PBKDF2_ITERS}]")
+    salt, dk = h["salt"], h["hash"]
+    if not isinstance(salt, str) or len(salt) < MIN_SALT_HEX or len(salt) % 2 or not _HEX_RE.match(salt):
+        bad(f"salt must be even-length lowercase hex of at least {MIN_SALT_HEX} chars")
+    if not isinstance(dk, str) or len(dk) != 64 or not _HEX_RE.match(dk):
+        bad("hash must be 64 lowercase hex chars")
+    try:
+        bytes.fromhex(salt); bytes.fromhex(dk)
+    except ValueError:
+        bad("not decodable hex")
 
 def _validate_import_record(store, d, idx) -> dict:
     """Validate one imported key record; return a normalized dict or raise ValidationError/PolicyViolation."""
@@ -232,12 +258,7 @@ def _validate_import_record(store, d, idx) -> dict:
         raise ValidationError(f"{where}: {e}")
     if crypto.prefix_of(d["prefix"]) != d["prefix"] or not d["prefix"].startswith(f"kf_{d['env']}_"):
         raise ValidationError(f"{where}: prefix does not match env")
-    h = d["hash"]
-    if (set(h) != {"algo", "iterations", "salt", "hash"} or h["algo"] != "pbkdf2_sha256"
-            or not isinstance(h["iterations"], int) or isinstance(h["iterations"], bool) or h["iterations"] < 1
-            or not isinstance(h["salt"], str) or not isinstance(h["hash"], str)
-            or not _HEX_RE.match(h["salt"]) or len(h["hash"]) != 64 or not _HEX_RE.match(h["hash"])):
-        raise ValidationError(f"{where}: malformed hash record")
+    _validate_hash_record(d["hash"], where)
     if d.get("rate_limit") is not None and d["rate_limit"] <= 0:
         raise ValidationError(f"{where}: rate limit must be positive")
     try:
@@ -250,6 +271,8 @@ def _validate_import_record(store, d, idx) -> dict:
         raise ValidationError(f"{where}: revoked record missing revoked_at")
     if status == "rotated" and not k.grace_until:
         raise ValidationError(f"{where}: rotated record missing grace_until")
+    if k.grace_until and parse_iso(k.grace_until) > now() + parse_duration(MAX_IMPORT_GRACE):
+        raise ValidationError(f"{where}: grace_until exceeds the {MAX_IMPORT_GRACE} cap")
     # Enforce org policy for any record that can still authenticate (active/grace/suspended).
     if k.effective_status() not in ("revoked", "expired", "rotated"):
         try:
@@ -275,19 +298,36 @@ def import_(store, data, overwrite=False, dry_run=False, allow_unrevoke=False) -
         raise ValidationError("'keys' must be a list")
     res = {"added": [], "skipped": [], "overwritten": []}
     staged, seen = [], set()
+    revoked_hashes = {r["hash"] for r in store.revoked_hashes}
+    revoked_prefixes = {r["prefix"] for r in store.revoked_hashes}
+    for kd in store.data["keys"].values():
+        if kd.get("status") == "revoked":
+            revoked_hashes.add(kd["hash"]["hash"]); revoked_prefixes.add(kd["prefix"])
+    changed_creds = []
     for idx, d in enumerate(keys):
         rec = _validate_import_record(store, d, idx)
         k = rec["id"]
         if k in seen:
             raise ValidationError(f"duplicate key id {k} in import file")
         seen.add(k)
+        if k in store.data["keys"] and not overwrite:
+            res["skipped"].append(k); continue
+        usable = ApiKey.from_dict(rec).effective_status() in ("active", "grace", "suspended")
+        if usable and not allow_unrevoke:
+            if rec["hash"]["hash"] in revoked_hashes or rec["prefix"] in revoked_prefixes:
+                raise KeyForgeError(f"refusing to import {k}: its hash or prefix belongs to a revoked key "
+                                    "(use --allow-unrevoke to force)")
+            for oid, od in list(store.data["keys"].items()) + [(r["id"], r) for r in staged]:
+                if oid != k and (od["hash"]["hash"] == rec["hash"]["hash"] or od["prefix"] == rec["prefix"]):
+                    raise KeyForgeError(f"refusing to import {k}: hash or prefix collides with key {oid} "
+                                        "(use --allow-unrevoke to force)")
         if k in store.data["keys"]:
-            if not overwrite:
-                res["skipped"].append(k); continue
-            existing = ApiKey.from_dict(store.data["keys"][k])
-            if existing.status == "revoked" and rec["status"] != "revoked" and not allow_unrevoke:
+            old = store.data["keys"][k]
+            if old.get("status") == "revoked" and rec["status"] != "revoked" and not allow_unrevoke:
                 raise KeyForgeError(f"refusing to overwrite revoked key {k} with a non-revoked record "
                                     "(use --allow-unrevoke to force)")
+            if old["hash"] != rec["hash"] or old["prefix"] != rec["prefix"]:
+                changed_creds.append(k)
             res["overwritten"].append(k)
         else:
             res["added"].append(k)
@@ -295,8 +335,20 @@ def import_(store, data, overwrite=False, dry_run=False, allow_unrevoke=False) -
     if not dry_run:
         for rec in staged:
             store.data["keys"][rec["id"]] = rec
+            if rec["status"] == "revoked":
+                _remember_revoked(store, rec)
         audit.record(store, "import", None, added=len(res["added"]),
                      overwritten=len(res["overwritten"]), skipped=len(res["skipped"]),
+                     overwritten_ids=res["overwritten"] or None,
+                     credential_changed_ids=changed_creds or None,
                      unrevoked=[r["id"] for r in staged if allow_unrevoke and r["status"] != "revoked"
-                                and r["id"] in res["overwritten"]] or None)
+                                and (r["hash"]["hash"] in revoked_hashes or r["prefix"] in revoked_prefixes)]
+                               or None)
     return res
+
+def _remember_revoked(store, k) -> None:
+    """Record a revoked key's hash/prefix in a list that survives purge."""
+    d = k if isinstance(k, dict) else k.to_dict()
+    if not any(r["hash"] == d["hash"]["hash"] for r in store.revoked_hashes):
+        store.revoked_hashes.append({"id": d["id"], "prefix": d["prefix"], "hash": d["hash"]["hash"],
+                                     "revoked_at": d.get("revoked_at")})
