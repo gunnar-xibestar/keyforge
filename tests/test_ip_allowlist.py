@@ -56,3 +56,16 @@ class TestIpFollowups(unittest.TestCase):
         self.assertNotIn("\n", str(cm.exception)); self.assertLess(len(str(cm.exception)), 150)
         det = self.st.audit_log[-1]["details"]
         self.assertNotIn("\n", det["ip"]); self.assertNotIn("\n", det["reason"]); self.assertLessEqual(len(det["ip"]), 70)
+
+class TestScopeSanitized(unittest.TestCase):
+    def test_scope_sanitized(self):
+        d = tempfile.TemporaryDirectory(); self.addCleanup(d.cleanup)
+        st = Store(os.path.join(d.name, "s.json")); _, s = svc.create(st, name="a", owner="o", scopes=["read:x"])
+        evil = "write:x\n2026 FAKE verify_ok" + "B" * 500
+        with self.assertRaises(VerifyFailed) as cm: svc.verify(st, s, scope=evil)
+        self.assertNotIn("\n", str(cm.exception)); self.assertLess(len(str(cm.exception)), 150)
+        det = st.audit_log[-1]["details"]
+        self.assertNotIn("\n", det["scope"]); self.assertLessEqual(len(det["scope"]), 70)
+        svc.verify(st, s, scope="read:x", ip="x\ny")  # no allow list: ip unchecked but still sanitized
+        det = st.audit_log[-1]["details"]
+        self.assertEqual(det["scope"], "'read:x'"); self.assertNotIn("\n", det["ip"])
