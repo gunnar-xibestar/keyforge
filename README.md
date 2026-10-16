@@ -136,7 +136,7 @@ There is no AWS or GCP provider. Those credentials are not part of this tool.
 
 ## Auth0
 
-Setup and first login are under [Install → Optional Auth0 login](#2-optional-auth0-login). This section is the runtime contract once Auth0 is enabled.
+Setup and first login are under [Install → Optional Auth0 login](#2-optional-auth0-login-for-demo). This section is the runtime contract once Auth0 is enabled.
 
 Default scopes requested at login (override with `AUTH0_SCOPES`):
 
