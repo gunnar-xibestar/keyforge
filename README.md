@@ -190,20 +190,20 @@ Alice can create and reveal; Bob can list and verify only. API-key secrets still
 
 ### Token diet
 
-Access tokens stay small. A token is rejected when any of these are true:
+Access tokens stay small. These rules are enforced in `keyforge/auth.py` whenever Auth0 is enabled and a token is accepted or refreshed.
 
-- it is longer than 2048 bytes
-- `alg` is not RS256, or the header carries anything beyond `alg`, `typ`, and `kid`
-- the payload carries anything beyond `iss`, `sub`, `aud`, `exp`, `iat`, `nbf`, `azp`, `scope`, `gty`, and `jti`
-- it contains `permissions`, `roles`, `groups`, profile claims, or `user_metadata` / `app_metadata` (turn **off** Auth0's "Add Permissions in the Access Token")
-- `scope` is not a short string of at most 8 scopes
-- `exp - iat` is longer than `KEYFORGE_MAX_TOKEN_TTL` (default 3600; the setting cannot be raised above 3600)
-- the signature, issuer (`https://$AUTH0_DOMAIN/`), or audience does not match
-- it is expired (a refresh token, stored separately, is exchanged once for a new access token that must pass the same checks)
-
-Authorization then uses that short `scope` claim. If `KEYFORGE_ROLE_MAP` points at a JSON object of `subject -> [scopes]`, those local scopes are used instead and the token does not have to carry the permission list. The map is local trust, same as the KMS file: protect it.
-
-Refresh tokens are opaque, capped at 2048 bytes, and are never accepted as access tokens.
+| access token rule | in keyforge |
+|---|---|
+| longer than 2048 bytes | `MAX_ACCESS_TOKEN_BYTES` |
+| `alg` is not RS256, or the header carries anything beyond `alg`, `typ`, and `kid` | `ALLOWED_HEADER` + `alg == "RS256"` |
+| payload carries anything beyond `iss`, `sub`, `aud`, `exp`, `iat`, `nbf`, `azp`, `scope`, `gty`, and `jti` | `ALLOWED_CLAIMS` |
+| contains `permissions`, `roles`, `groups`, profile claims, or `user_metadata` / `app_metadata` (turn **off** Auth0's "Add Permissions in the Access Token") | `FORBIDDEN_CLAIMS` |
+| `scope` is not a short string of at most 8 scopes | `MAX_SCOPES` |
+| `exp - iat` is longer than `KEYFORGE_MAX_TOKEN_TTL` (default 3600; the setting cannot be raised above 3600) | `max_token_ttl()` / `DEFAULT_MAX_TTL` |
+| signature, issuer (`https://$AUTH0_DOMAIN/`), or audience does not match | JWKS verify + `AUTH0_DOMAIN` / `AUTH0_AUDIENCE` |
+| expired (a refresh token, stored separately, is exchanged once for a new access token that must pass the same checks) | `TokenExpired` → `_refresh` |
+| authorization uses the short `scope` claim; if `KEYFORGE_ROLE_MAP` points at `subject -> [scopes]`, those local scopes win (protect the map like the KMS file) | `_role_map_scopes` |
+| refresh tokens are opaque, capped at 2048 bytes, and are never accepted as access tokens | `MAX_REFRESH_TOKEN_BYTES` |
 
 ## Environment
 
