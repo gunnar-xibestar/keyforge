@@ -102,7 +102,7 @@ The on-disk hash record is unchanged: `algo`, `iterations`, `salt`, `hash`. The 
 | `memory` | An in-process key for tests (`KEYFORGE_KMS_MEMORY_KEY` may pin it as 64 hex chars). Useless after the process exits. |
 | `pkcs11` | AES-256-GCM inside a PKCS#11 token. The wrapping key is not exported. |
 
-The local file is a software KEK, not an HSM. Put `KEYFORGE_KMS_KEY_FILE` outside the store directory if the ciphertext and the wrapping key should sit on different permission boundaries. Anyone who can read both can reveal secrets.
+The local file is a software KEK. Put `KEYFORGE_KMS_KEY_FILE` outside the store directory if the ciphertext and the wrapping key should sit on different permission boundaries. Anyone who can read both can reveal secrets.
 
 ### PKCS#11
 
