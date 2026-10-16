@@ -1,10 +1,10 @@
 """argparse CLI for KeyForge."""
 from __future__ import annotations
 import argparse, csv, io, json, os, sys
-from . import service as svc, audit, policy as pol, auth, __version__, BANNER
+from . import service as svc, audit, policy as pol, auth, server, __version__, BANNER
 from .errors import KeyForgeError, Aborted, ValidationError
 from .models import parse_duration, now, parse_iso, iso
-from .store import Store
+from .store import Store, resolve_path
 
 EXIT_OK, EXIT_ERR, EXIT_USAGE, EXIT_NOTFOUND, EXIT_VERIFY, EXIT_POLICY, EXIT_ABORT, EXIT_TAMPER, EXIT_LOCKED = 0, 1, 2, 3, 4, 5, 6, 7, 8
 
@@ -308,7 +308,16 @@ def build_parser():
                     help="validate a token-endpoint JSON file instead of the device flow")
     asub.add_parser("status", parents=[sub_common], help="show the current principal, never the token")
     asub.add_parser("logout", parents=[sub_common], help="delete the local token file")
+
+    sv = add("serve", cmd_serve, "demo HTTP server: Bearer kf_... keys only (NOT for production)")
+    sv.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1)")
+    sv.add_argument("--port", type=int, default=8787, help="bind port (default 8787)")
     return p
+
+
+def cmd_serve(a, st=None):
+    """Long-running; does not hold the store lock. Auth0 (if enabled) needs keys:verify."""
+    return server.serve(str(resolve_path(getattr(a, "store", None))), host=a.host, port=a.port)
 
 def cmd_auth(a, st=None):
     if a.auth_cmd == "login":
@@ -342,6 +351,9 @@ def main(argv=None) -> int:
         try:
             if args.cmd == "auth":
                 return cmd_auth(args) or EXIT_OK
+            if args.cmd == "serve":
+                # Do not hold the store lock for the life of the process; each request locks briefly.
+                return cmd_serve(args) or EXIT_OK
             st = Store(args.store, lock=True)  # exclusive lock held for the whole read-modify-write
             try:
                 rc = args.func(args, st)

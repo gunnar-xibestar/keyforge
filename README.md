@@ -42,6 +42,7 @@ Store: `--store PATH`, `$KEYFORGE_STORE`, or `~/.keyforge/store.json`. Writes ar
 | `export [-o FILE] [--include-audit]` / `import FILE [--overwrite] [--allow-unrevoke] [--dry-run]` | hashes and envelopes, never plaintext |
 | `purge [--older-than 7d] [--include-revoked] [--dry-run] [--yes]` | delete expired and post-grace keys |
 | `auth login [--from-file FILE]` / `auth status` / `auth logout` | device login, principal status, logout. Status never prints tokens. With Auth0 unset, status reports auth disabled |
+| `serve [--host 127.0.0.1] [--port 8787]` | **demo** HTTP server: clients authenticate only with `Authorization: Bearer kf_...`. Not for production |
 
 Global: `--json`, `--store`. Destructive commands prompt unless `--yes` is given (or `--dry-run`). Non-interactive stdin refuses without `--yes`.
 
@@ -117,7 +118,7 @@ When auth is on, commands require a principal:
 |---|---|
 | `keys:read` | list, show, audit, export, policy show |
 | `keys:write` | create, rotate, revoke, suspend, resume, update, import, purge, policy set/reset |
-| `keys:verify` | verify |
+| `keys:verify` | verify, serve |
 | `reveal:secret` | reveal |
 
 `auth login`, `auth status`, and `auth logout` do not require an existing principal. A missing scope exits **4**. The audit `actor` for an authorized command is the Auth0 `sub` unless `KEYFORGE_ACTOR` is already set. `os_user` remains the process uid.
@@ -165,6 +166,26 @@ Refresh tokens are opaque, capped at 2048 bytes, and are never accepted as acces
 ## Exit codes
 
 0 ok · 1 error (including authentication failure) · 2 usage/validation · 3 not found · 4 verification failed or missing Auth0 scope · 5 policy violation · 6 aborted · 7 audit log tampered · 8 store locked
+
+## Demo HTTP server
+
+`serve` is a small stdlib HTTP demo that proves a KeyForge secret can gate an API. It is **not** a production gateway.
+
+```
+keyforge create --name demo --owner you --scope read:packets   # copy the secret once
+keyforge serve --port 8787
+curl -s http://127.0.0.1:8787/health
+curl -s -H "Authorization: Bearer kf_..." http://127.0.0.1:8787/whoami
+curl -s -H "Authorization: Bearer kf_..." http://127.0.0.1:8787/packets
+```
+
+| route | auth |
+|---|---|
+| `GET /health` | open |
+| `GET /whoami` | any valid `kf_...` secret |
+| `GET /packets` | secret must grant scope `read:packets` |
+
+Each request calls `verify` (hash + status + optional scope/IP). Missing/invalid Bearer → 401; failed verify → 403. Auth0, when enabled, only gates who may *start* the server (`keys:verify`); API clients still present KeyForge secrets, never Auth0 tokens.
 
 ## Tests
 
