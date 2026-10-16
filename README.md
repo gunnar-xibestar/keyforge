@@ -42,6 +42,7 @@ Store: `--store PATH`, `$KEYFORGE_STORE`, or `~/.keyforge/store.json`. Writes ar
 | `export [-o FILE] [--include-audit]` / `import FILE [--overwrite] [--allow-unrevoke] [--dry-run]` | hashes and envelopes, never plaintext |
 | `purge [--older-than 7d] [--include-revoked] [--dry-run] [--yes]` | delete expired and post-grace keys |
 | `auth login [--from-file FILE]` / `auth status` / `auth logout` | device login, principal status, logout. Status never prints tokens. With Auth0 unset, status reports auth disabled |
+| `serve [--host 127.0.0.1] [--port 8787]` | **demo** HTTP server: clients authenticate only with `Authorization: Bearer kf_...`. Not for production |
 
 Global: `--json`, `--store`. Destructive commands prompt unless `--yes` is given (or `--dry-run`). Non-interactive stdin refuses without `--yes`.
 
@@ -117,7 +118,7 @@ When auth is on, commands require a principal:
 |---|---|
 | `keys:read` | list, show, audit, export, policy show |
 | `keys:write` | create, rotate, revoke, suspend, resume, update, import, purge, policy set/reset |
-| `keys:verify` | verify |
+| `keys:verify` | verify, serve |
 | `reveal:secret` | reveal |
 
 `auth login`, `auth status`, and `auth logout` do not require an existing principal. A missing scope exits **4**. The audit `actor` for an authorized command is the Auth0 `sub` unless `KEYFORGE_ACTOR` is already set. `os_user` remains the process uid.
@@ -165,6 +166,94 @@ Refresh tokens are opaque, capped at 2048 bytes, and are never accepted as acces
 ## Exit codes
 
 0 ok · 1 error (including authentication failure) · 2 usage/validation · 3 not found · 4 verification failed or missing Auth0 scope · 5 policy violation · 6 aborted · 7 audit log tampered · 8 store locked
+
+## Demo HTTP server
+
+`serve` is a small stdlib HTTP demo that proves a KeyForge secret can gate an API. It is **not** a production gateway.
+
+| route | auth |
+|---|---|
+| `GET /health` | open |
+| `GET /whoami` | any valid `kf_...` secret |
+| `GET /packets` | secret must grant scope `read:packets` |
+
+Each request calls `verify` (hash + status + optional scope/IP). Missing/invalid Bearer → 401; failed verify → 403. Auth0, when enabled, only gates who may *start* the server (`keys:verify`); API clients still present KeyForge secrets, never Auth0 tokens.
+
+### Walkthrough
+
+**1. Create a key**
+
+```
+keyforge create --name demo --owner you --scope read:packets
+```
+
+Creates a key named `demo` owned by `you`, with scope `read:packets` (required for `/packets`). The full secret (`kf_test_…` / `kf_live_…`) is printed **once** — copy it now. Only the hash is stored.
+
+**2. Start the server**
+
+```
+keyforge serve --port 8787
+```
+
+Listens on `http://127.0.0.1:8787`. The process does not hold the store lock while idle; each request locks, calls `verify`, then unlocks. Auth0 (if enabled) only decides who may run this command; API clients authenticate with KeyForge secrets.
+
+**3. Health check (no auth)**
+
+```
+curl -s http://127.0.0.1:8787/health
+```
+
+```json
+{ "ok": true, "service": "keyforge-demo", "version": "0.2.0" }
+```
+
+`/health` is open. This only proves the process is up.
+
+**4. Whoami without a key**
+
+```
+curl -s -w '\nHTTP %{http_code}\n' http://127.0.0.1:8787/whoami
+```
+
+```json
+{ "error": "missing or invalid Authorization Bearer token" }
+```
+
+HTTP **401**. No `Authorization: Bearer …` header → rejected before `verify`.
+
+**5. Whoami with the key**
+
+```
+curl -s -H "Authorization: Bearer kf_..." http://127.0.0.1:8787/whoami
+```
+
+```json
+{
+  "ok": true,
+  "route": "/whoami",
+  "key": {
+    "id": "key_…",
+    "name": "demo",
+    "prefix": "kf_test_…",
+    "env": "test",
+    "owner": "you",
+    "scopes": ["read:packets"],
+    "status": "active"
+  }
+}
+```
+
+The server parses the Bearer secret and runs `verify` (hash + status; no required scope on this route). The response is public metadata only — never the hash, envelope, or secret. HTTP **200** means the secret is a valid KeyForge key.
+
+**6. Packets (scope-gated)**
+
+```
+curl -s -H "Authorization: Bearer kf_..." http://127.0.0.1:8787/packets
+```
+
+Same shape as `/whoami`, plus `"required_scope": "read:packets"`. `verify` is called with that scope. Your key has it → **200**. A key without it → **403** (`missing scope …`). A wrong or unknown secret → **403** (verify failed).
+
+**Flow in one line:** create secret → serve → open `/health` → deny bare `/whoami` → accept Bearer on `/whoami` → require `read:packets` on `/packets`.
 
 ## Tests
 
