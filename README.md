@@ -1,50 +1,186 @@
-# KeyForge: mock enterprise API key manager
+# KeyForge
 
-> ⚠️ **MOCK / DEMO ONLY. NOT FOR PRODUCTION.** It has no real secret storage, no HSM/KMS, and no authN/authZ on the CLI itself.
+Local API key manager. Secrets are encrypted at rest, verification still uses a password hash, and operator login can be delegated to Auth0.
 
-Pure-stdlib Python 3.10+. Keys look like `kf_<env>_<32 random chars>`. The full secret is printed **once** at create/rotate time. Only a salted PBKDF2-HMAC-SHA256 hash plus the display prefix (`kf_live_AbCd1234`) is stored.
+An API key looks like `kf_<env>_<32 random chars>`. `create` and `rotate` print the secret once. The store keeps two things and never the plaintext:
+
+- a salted **PBKDF2-HMAC-SHA256** hash, used by `verify`
+- an **AES-256-GCM** envelope of the secret, used by `reveal`
+
+Keys created before envelope support have a hash only. `verify` still works for them. `reveal` does not, because the secret was never retained. Rotate those keys if you need a recoverable copy.
+
+This is a single-operator tool. The local KMS is a software key or a PKCS#11 token you configure. It is not a cloud KMS, and Auth0 never receives API-key secrets.
 
 ## Install
-    pip install -e .        # provides the `keyforge` command
-    python -m keyforge ...  # or run without installing
 
-Store: `--store PATH`, or `$KEYFORGE_STORE`, or `~/.keyforge/store.json` (JSON, written atomically, mode 0600).
+Python 3.10+ and the `cryptography` package (Debian/Ubuntu: `python3-cryptography`).
+
+```
+pip install -e .          # provides the `keyforge` command
+python -m keyforge ...    # or run without installing
+```
+
+PKCS#11 is optional. Install `python-pkcs11` and a module such as SoftHSM (`softhsm2`) only if you set `KEYFORGE_KMS_PROVIDER=pkcs11`.
+
+Store: `--store PATH`, `$KEYFORGE_STORE`, or `~/.keyforge/store.json`. Writes are atomic, mode 0600, under an exclusive lock.
 
 ## Commands
+
 | command | purpose |
 |---|---|
-| `create --name --owner [--team] [--env live/test] [--scope S]... [--expires-in 30d / --expires-at ISO] [--rate-limit N] [--ip-allow CIDR]... [--label k=v]... [--description] [--dry-run]` | new key |
+| `create --name --owner [--team] [--env live/test] [--scope S]... [--expires-in 30d / --expires-at ISO] [--rate-limit N] [--ip-allow CIDR]... [--label k=v]... [--description] [--dry-run]` | new key; prints the secret once and stores an envelope |
 | `list [--owner --team --env --status --scope GLOB --label k=v] [--format table/json/csv]` | list keys |
-| `show KEY` | details (KEY = id, prefix or unique name) |
-| `verify SECRET/- [--scope S] [--ip IP]` | check a secret (exit 4 if invalid) |
-| `rotate KEY [--grace-period 24h] [--dry-run] [--yes]` | new secret; old one stays valid during the grace period |
-| `revoke KEY [--reason] [--dry-run] [--yes]` | permanent |
+| `show KEY` | metadata only (no hash, no envelope, no secret) |
+| `reveal KEY` | decrypt the envelope and print the secret. Requires scope `reveal:secret` when Auth0 is enabled |
+| `verify SECRET/- [--scope S] [--ip IP]` | check a secret against the hash (exit 4 if invalid). Does not decrypt |
+| `rotate KEY [--grace-period 24h] [--dry-run] [--yes]` | new secret and envelope; the old secret stays valid during grace |
+| `revoke KEY [--reason] [--dry-run] [--yes]` | permanent. `reveal` then refuses |
 | `suspend KEY` / `resume KEY` | temporary disable |
-| `update KEY [--add-scope/--remove-scope] [--label k=v/--unset-label] [--add-ip/--remove-ip] [--expires-in/--expires-at/--no-expiry] [--rate-limit] [--description] [--dry-run]` | modify |
-| `audit [--key --action --since 24h/ISO --limit N] [--export FILE]` | audit log |
-| `policy show` / `policy set FIELD VALUE` / `policy reset` | org rules: `max_ttl`, `require_expiry`, `allowed_scopes` (globs), `required_labels`, `max_rate_limit`, `live_requires_ip_allow`, `default_grace_period` |
-| `export [-o FILE] [--include-audit]` / `import FILE [--overwrite] [--dry-run]` | backup and migration (hashes only) |
-| `purge [--older-than 7d] [--include-revoked] [--dry-run] [--yes]` | delete expired keys and rotated keys past their grace period |
+| `update KEY ...` | scopes, labels, expiry, rate limit, allow list |
+| `audit [--key --action --since --limit] [--export FILE] [--verify] [--adopt-legacy]` | audit log |
+| `policy show` / `policy set FIELD VALUE` / `policy reset` | org rules |
+| `export [-o FILE] [--include-audit]` / `import FILE [--overwrite] [--allow-unrevoke] [--dry-run]` | hashes and envelopes, never plaintext |
+| `purge [--older-than 7d] [--include-revoked] [--dry-run] [--yes]` | delete expired and post-grace keys |
+| `auth login [--from-file FILE]` / `auth status` / `auth logout` | device login, principal status, logout. Status never prints tokens. With Auth0 unset, status reports auth disabled |
 
-Global: `--json` (machine output), `--store`. Destructive commands prompt for confirmation. When stdin is not a TTY they refuse unless `--yes` is given.
+Global: `--json`, `--store`. Destructive commands prompt unless `--yes` is given (or `--dry-run`). Non-interactive stdin refuses without `--yes`.
 
-Scopes take the form `resource:action`, and grants may be globs (`read:*`).
-Statuses: active, suspended, revoked, expired, grace (rotated, old key still valid), rotated.
+Scopes look like `resource:action`. Grants may be globs (`read:*`). Statuses: active, suspended, revoked, expired, grace, rotated.
+
+## Secret storage
+
+`create` draws a fresh 32-byte data key, encrypts the secret with **AES-256-GCM**, and asks the KMS to wrap that data key. The associated data binds the ciphertext to the key id, so an envelope cannot be moved onto another record. `reveal` unwraps, decrypts, and checks the plaintext against the PBKDF2 hash before printing it. A bad tag, a wrong master key, or a hash mismatch fails closed and returns no secret.
+
+`verify` never decrypts. It still walks candidates by prefix and compares the PBKDF2 hash in constant time.
+
+The on-disk hash record is unchanged: `algo`, `iterations`, `salt`, `hash`. The envelope is a sibling field, `secret_envelope`, and `show` / `list` / `public()` omit both the hash and the envelope.
+
+## KMS
+
+`KEYFORGE_KMS_PROVIDER` selects the wrapper. Default is `local`.
+
+| provider | what wraps the data key |
+|---|---|
+| `local` | AES-256-GCM under a 32-byte file. `KEYFORGE_KMS_KEY_FILE` if set, otherwise `<store-dir>/kms-master.key`. Created mode 0600. Symlinks and group/world-readable files are refused. |
+| `memory` | An in-process key for tests (`KEYFORGE_KMS_MEMORY_KEY` may pin it as 64 hex chars). Useless after the process exits. |
+| `pkcs11` | AES-256-GCM inside a PKCS#11 token. The wrapping key is not exported. |
+
+The local file is a software KEK, not an HSM. Put `KEYFORGE_KMS_KEY_FILE` outside the store directory if the ciphertext and the wrapping key should sit on different permission boundaries. Anyone who can read both can reveal secrets.
+
+### PKCS#11
+
+Environment, all required:
+
+- `KEYFORGE_PKCS11_MODULE` — module path, for example `/usr/lib/softhsm/libsofthsm2.so` or a hardware vendor library
+- `KEYFORGE_PKCS11_TOKEN` — token label
+- `KEYFORGE_PKCS11_PIN` — user PIN, from the environment only. It is not written to the store or to logs
+- `KEYFORGE_PKCS11_KEY_LABEL` — AES key label on the token
+- `KEYFORGE_PKCS11_CREATE_KEY=1` — generate a non-exportable AES-256 key when the label is missing
+
+SoftHSM also needs `SOFTHSM2_CONF`. A typical first-time setup:
+
+```
+mkdir -p "$HOME/.keyforge/softhsm/tokens"
+printf 'directories.tokendir = %s\nobjectstore.backend = file\nlog.level = ERROR\n' \
+  "$HOME/.keyforge/softhsm/tokens" > "$HOME/.keyforge/softhsm/softhsm2.conf"
+export SOFTHSM2_CONF="$HOME/.keyforge/softhsm/softhsm2.conf"
+softhsm2-util --init-token --free --label keyforge --pin "$PIN" --so-pin "$SO_PIN"
+export KEYFORGE_KMS_PROVIDER=pkcs11
+export KEYFORGE_PKCS11_MODULE=/usr/lib/softhsm/libsofthsm2.so
+export KEYFORGE_PKCS11_TOKEN=keyforge
+export KEYFORGE_PKCS11_PIN="$PIN"
+export KEYFORGE_PKCS11_KEY_LABEL=keyforge-kek
+export KEYFORGE_PKCS11_CREATE_KEY=1
+```
+
+`Pkcs11Kms` talks to any object with `wrap(label, dek, aad)` / `unwrap(label, blob, aad)`. `Pkcs11Token` is the real session. `FakePkcs11Token` is the in-memory stand-in the unit tests use when they are not pointing at SoftHSM. Point the environment variables above at a hardware module to use one; no code change is required.
+
+There is no AWS or GCP provider. Those credentials are not part of this tool.
+
+## Auth0
+
+Auth is **off** unless all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE` are set. With them unset, every existing command behaves as before and trusts the OS user. Setting only some of them is an error.
+
+`AUTH0_CLIENT_SECRET` is optional (confidential clients). It is read from the environment and is never stored.
+
+`auth login` runs the device authorization flow against `https://$AUTH0_DOMAIN`. The default requested scope string is small:
+
+```
+keys:read keys:write keys:verify reveal:secret offline_access
+```
+
+Override it with `AUTH0_SCOPES`. Profile scopes (`openid`, `profile`, `email`) are not requested. `auth login --from-file response.json` validates a token response you already have. `id_token` is discarded. `auth logout` deletes the token file. Tokens live in `KEYFORGE_TOKEN_FILE` or `~/.keyforge/tokens.json`, mode 0600.
+
+When auth is on, commands require a principal:
+
+| scope | commands |
+|---|---|
+| `keys:read` | list, show, audit, export, policy show |
+| `keys:write` | create, rotate, revoke, suspend, resume, update, import, purge, policy set/reset |
+| `keys:verify` | verify |
+| `reveal:secret` | reveal |
+
+`auth login`, `auth status`, and `auth logout` do not require an existing principal. A missing scope exits **4**. The audit `actor` for an authorized command is the Auth0 `sub` unless `KEYFORGE_ACTOR` is already set. `os_user` remains the process uid.
+
+KeyForge does not call the Auth0 Management API or `/userinfo`. API-key secrets are not sent to Auth0.
+
+### Token diet
+
+Access tokens stay small. A token is rejected when any of these are true:
+
+- it is longer than 2048 bytes
+- `alg` is not RS256, or the header carries anything beyond `alg`, `typ`, and `kid`
+- the payload carries anything beyond `iss`, `sub`, `aud`, `exp`, `iat`, `nbf`, `azp`, `scope`, `gty`, and `jti`
+- it contains `permissions`, `roles`, `groups`, profile claims, or `user_metadata` / `app_metadata` (turn **off** Auth0's "Add Permissions in the Access Token")
+- `scope` is not a short string of at most 8 scopes
+- `exp - iat` is longer than `KEYFORGE_MAX_TOKEN_TTL` (default 3600; the setting cannot be raised above 3600)
+- the signature, issuer (`https://$AUTH0_DOMAIN/`), or audience does not match
+- it is expired (a refresh token, stored separately, is exchanged once for a new access token that must pass the same checks)
+
+Authorization then uses that short `scope` claim. If `KEYFORGE_ROLE_MAP` points at a JSON object of `subject -> [scopes]`, those local scopes are used instead and the token does not have to carry the permission list. The map is local trust, same as the KMS file: protect it.
+
+Refresh tokens are opaque, capped at 2048 bytes, and are never accepted as access tokens.
+
+## Environment
+
+| variable | role |
+|---|---|
+| `KEYFORGE_STORE` | store path |
+| `KEYFORGE_KMS_PROVIDER` | `local` (default), `memory`, or `pkcs11` |
+| `KEYFORGE_KMS_KEY_FILE` | 32-byte local master key, mode 0600 |
+| `KEYFORGE_KMS_MEMORY_KEY` | test-only hex master key for the memory provider |
+| `KEYFORGE_PKCS11_MODULE` / `_TOKEN` / `_PIN` / `_KEY_LABEL` | PKCS#11 session |
+| `KEYFORGE_PKCS11_CREATE_KEY` | `1` to generate the AES key on the token |
+| `SOFTHSM2_CONF` | SoftHSM configuration, if that is the module |
+| `AUTH0_DOMAIN` / `AUTH0_CLIENT_ID` / `AUTH0_AUDIENCE` | enable Auth0. Domain is a hostname, no scheme |
+| `AUTH0_CLIENT_SECRET` | optional; environment only |
+| `AUTH0_SCOPES` | override the small scope string requested at login |
+| `KEYFORGE_TOKEN_FILE` | where the lean access token and refresh token are stored |
+| `KEYFORGE_ROLE_MAP` | local subject-to-scopes JSON |
+| `KEYFORGE_MAX_TOKEN_TTL` | access-token lifetime cap in seconds, 60–3600 |
+| `KEYFORGE_PBKDF2_ITERS` | hash iterations (default 200000) |
+| `KEYFORGE_AUDIT_HMAC_KEY_FILE` | optional audit HMAC key |
+| `KEYFORGE_ACTOR` | optional actor claim; otherwise the Auth0 subject or the login name |
 
 ## Exit codes
-0 ok · 1 error · 2 usage/validation · 3 not found · 4 verification failed · 5 policy violation · 6 aborted (no confirmation) · 7 audit log tampered (`audit --verify`) · 8 store locked (lock wait timed out)
+
+0 ok · 1 error (including authentication failure) · 2 usage/validation · 3 not found · 4 verification failed or missing Auth0 scope · 5 policy violation · 6 aborted · 7 audit log tampered · 8 store locked
 
 ## Tests
-    python -m unittest discover -s tests -v     # or: pytest
 
-## Release notes
-
-### Unreleased: import hardening
-- The store now keeps `revoked_hashes`, a list that `purge` never clears. It holds the id, prefix and hash of every key that was revoked, or rotated and then purged. `import` rejects any record that matches an entry on this list, whatever the record's status. The same applies to another existing key's hash or prefix. `--allow-unrevoke` overrides this. `update` (extending or clearing expiry) and `resume` refuse to revive a key whose credential is on the list.
-- **Known gap:** keys revoked or rotated and then **purged before this change** were never recorded, so these checks can't catch them. If you need protection for them, restore them from an older export as revoked records. Matching ids are allowed.
+```
+python -m unittest discover -s tests -v
+```
 
 ## Audit integrity
+
 - `audit --verify` checks the hash chain and `audit_meta` (legacy count, event count, head). It exits 7 on any mismatch, including missing metadata.
 - Stores from before hash-chaining have no metadata. Run `audit --adopt-legacy` once to start the chain. Existing events stay unprotected, and the adoption is itself audited.
 - Optional HMAC: set `KEYFORGE_AUDIT_HMAC_KEY_FILE` to a file of at least 16 bytes, mode 0600, kept outside the store. If the key is missing or unusable, writes still succeed (a revoke is never blocked), but the event is stored without a MAC, a warning goes to stderr, and a later keyed `audit --verify` fails.
-- **Recommended:** for real tamper evidence, set `KEYFORGE_AUDIT_HMAC_KEY_FILE`. Without it the chain is unkeyed. Anyone who can write the store file can rebuild a valid-looking chain, or strip it and run `--adopt-legacy`. They just can't do it piecemeal without being noticed. Keep the key where store writers can't read it.
+- For real tamper evidence, set `KEYFORGE_AUDIT_HMAC_KEY_FILE`. Without it the chain is unkeyed. Anyone who can write the store file can rebuild a valid-looking chain. Keep the key where store writers cannot read it.
+
+## Import hardening
+
+- The store keeps `revoked_hashes`. `purge` never clears it. `import` rejects a record whose hash or prefix matches a revoked or retired credential, unless `--allow-unrevoke` is set. `resume` and extending an expiry refuse the same match.
+- Imported envelopes are checked for shape. A bad envelope aborts the import. Revealing an imported envelope only works with the same KMS key that wrapped it.
+- **Known gap:** keys revoked or rotated and then purged before `revoked_hashes` existed were never recorded. Restore them from an older export as revoked records if you need that protection.

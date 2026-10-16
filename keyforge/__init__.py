@@ -1,3 +1,4 @@
-"""KeyForge - a MOCK enterprise API key manager. NOT FOR PRODUCTION USE."""
-__version__ = "0.1.0"
-MOCK_BANNER = "KeyForge MOCK - not for production use"
+"""KeyForge - local API key manager with envelope encryption and optional Auth0."""
+__version__ = "0.2.0"
+BANNER = "KeyForge - envelope-encrypted API keys, optional Auth0"
+MOCK_BANNER = BANNER  # retained so older imports keep working
