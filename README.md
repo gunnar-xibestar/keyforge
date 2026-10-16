@@ -40,7 +40,6 @@ Auth0 is **off** until all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH
 4. Authorize the application for the API. Add these API scopes (Auth0 → APIs → your API → Permissions):  
    `keys:read`, `keys:write`, `keys:verify`, `reveal:secret`
 5. Turn **off** “Add Permissions in the Access Token” (KeyForge reads a short `scope` claim only; see [Token diet](#token-diet)).
-6. Optional: for a confidential client, copy the **Client Secret** into the environment only — never into the store.
 
 **On your machine**
 
@@ -49,7 +48,6 @@ export AUTH0_DOMAIN=your-tenant.us.auth0.com    # hostname only, no https://
 export AUTH0_CLIENT_ID=your_native_app_client_id
 export AUTH0_AUDIENCE=https://keyforge.local/api
 # optional:
-# export AUTH0_CLIENT_SECRET=...
 # export AUTH0_SCOPES='keys:read keys:write keys:verify reveal:secret offline_access'
 
 keyforge auth login
