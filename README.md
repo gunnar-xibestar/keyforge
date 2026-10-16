@@ -13,6 +13,8 @@ This is a single-operator tool. The local KMS is a software key or a PKCS#11 tok
 
 ## Install
 
+### 1. Package
+
 Python 3.10+ and the `cryptography` package (Debian/Ubuntu: `python3-cryptography`).
 
 ```
@@ -23,6 +25,40 @@ python -m keyforge ...    # or run without installing
 PKCS#11 is optional. Install `python-pkcs11` and a module such as SoftHSM (`softhsm2`) only if you set `KEYFORGE_KMS_PROVIDER=pkcs11`.
 
 Store: `--store PATH`, `$KEYFORGE_STORE`, or `~/.keyforge/store.json`. Writes are atomic, mode 0600, under an exclusive lock.
+
+Without Auth0 configured, you are done — every command trusts the OS user.
+
+### 2. Optional Auth0 login
+
+Auth0 is **off** until all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE` are set. Setting only some of them is an error.
+
+**In the Auth0 dashboard**
+
+1. Create an API whose **Identifier** is the audience you will put in `AUTH0_AUDIENCE` (for example `https://keyforge.local/api`).
+2. Create a **Native** application (device-code friendly). Copy its **Client ID**.
+3. Enable the **Device Code** grant for that application.
+4. Authorize the application for the API. Add these API scopes (Auth0 → APIs → your API → Permissions):  
+   `keys:read`, `keys:write`, `keys:verify`, `reveal:secret`
+5. Turn **off** “Add Permissions in the Access Token” (KeyForge reads a short `scope` claim only; see [Token diet](#token-diet)).
+6. Optional: for a confidential client, copy the **Client Secret** into the environment only — never into the store.
+
+**On your machine**
+
+```
+export AUTH0_DOMAIN=your-tenant.us.auth0.com    # hostname only, no https://
+export AUTH0_CLIENT_ID=your_native_app_client_id
+export AUTH0_AUDIENCE=https://keyforge.local/api
+# optional:
+# export AUTH0_CLIENT_SECRET=...
+# export AUTH0_SCOPES='keys:read keys:write keys:verify reveal:secret offline_access'
+
+keyforge auth login
+keyforge auth status
+```
+
+`auth login` prints a URL and a short code. Open the URL, enter the code, approve. KeyForge polls Auth0, then stores a lean access token (and refresh token when issued) in `KEYFORGE_TOKEN_FILE` or `~/.keyforge/tokens.json` (mode 0600). `auth status` shows the principal and scopes — never the token. `auth logout` deletes the file.
+
+Until you log in, gated commands fail. After login, each command needs the matching Auth0 scope (see [Auth0](#auth0)). API-key secrets are never sent to Auth0.
 
 ## Commands
 
@@ -100,17 +136,15 @@ There is no AWS or GCP provider. Those credentials are not part of this tool.
 
 ## Auth0
 
-Auth is **off** unless all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE` are set. With them unset, every existing command behaves as before and trusts the OS user. Setting only some of them is an error.
+Setup and first login are under [Install → Optional Auth0 login](#2-optional-auth0-login). This section is the runtime contract once Auth0 is enabled.
 
-`AUTH0_CLIENT_SECRET` is optional (confidential clients). It is read from the environment and is never stored.
-
-`auth login` runs the device authorization flow against `https://$AUTH0_DOMAIN`. The default requested scope string is small:
+Default scopes requested at login (override with `AUTH0_SCOPES`):
 
 ```
 keys:read keys:write keys:verify reveal:secret offline_access
 ```
 
-Override it with `AUTH0_SCOPES`. Profile scopes (`openid`, `profile`, `email`) are not requested. `auth login --from-file response.json` validates a token response you already have. `id_token` is discarded. `auth logout` deletes the token file. Tokens live in `KEYFORGE_TOKEN_FILE` or `~/.keyforge/tokens.json`, mode 0600.
+Profile scopes (`openid`, `profile`, `email`) are not requested. `auth login --from-file response.json` validates a token response you already have; `id_token` is discarded.
 
 When auth is on, commands require a principal:
 
@@ -123,7 +157,7 @@ When auth is on, commands require a principal:
 
 `auth login`, `auth status`, and `auth logout` do not require an existing principal. A missing scope exits **4**. The audit `actor` for an authorized command is the Auth0 `sub` unless `KEYFORGE_ACTOR` is already set. `os_user` remains the process uid.
 
-KeyForge does not call the Auth0 Management API or `/userinfo`. API-key secrets are not sent to Auth0.
+KeyForge does not call the Auth0 Management API or `/userinfo`. API-key secrets are not sent to Auth0. `AUTH0_CLIENT_SECRET`, when used, is environment-only and is never stored.
 
 ### Token diet
 
