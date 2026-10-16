@@ -79,6 +79,7 @@ Full variable list: [Environment](#environment). Access-token size rules: [Token
 | `purge [--older-than 7d] [--include-revoked] [--dry-run] [--yes]` | delete expired and post-grace keys |
 | `auth login [--from-file FILE]` / `auth status` / `auth logout` | device login, principal status, logout. Status never prints tokens. With Auth0 unset, status reports auth disabled |
 | `serve [--host 127.0.0.1] [--port 8787]` | **demo** HTTP server: clients authenticate only with `Authorization: Bearer kf_...`. Not for production |
+| `uninstall [--dry-run] [--yes] [--include-configured]` | delete `~/.keyforge` only. See [Uninstall](#uninstall) |
 
 Global: `--json`, `--store`. Destructive commands prompt unless `--yes` is given (or `--dry-run`). Non-interactive stdin refuses without `--yes`.
 
@@ -309,6 +310,18 @@ Access tokens stay small. These rules are enforced in `keyforge/auth.py` wheneve
 | expired (a refresh token, stored separately, is exchanged once for a new access token that must pass the same checks) | `TokenExpired` → `_refresh` |
 | authorization uses the short `scope` claim; if `KEYFORGE_ROLE_MAP` points at `subject -> [scopes]`, those local scopes win (protect the map like the KMS file) | `_role_map_scopes` |
 | refresh tokens are opaque, capped at 2048 bytes, and are never accepted as access tokens | `MAX_REFRESH_TOKEN_BYTES` |
+
+## Uninstall
+
+```
+keyforge uninstall --dry-run
+keyforge uninstall --yes
+pip uninstall keyforge
+```
+
+`uninstall` deletes the data directory `~/.keyforge`: the store, the local KMS key that lives beside it, tokens, and anything else in that directory. It overwrites regular files before unlinking them. It does not remove the `keyforge` command. Run `pip uninstall keyforge` after the data is gone.
+
+It refuses a symlinked data directory, a directory you do not own, and a store that another process has locked. Symlinks inside the directory are removed without deleting their targets. A file outside `~/.keyforge` is left alone, including one named by `KEYFORGE_STORE`, `KEYFORGE_TOKEN_FILE`, `KEYFORGE_KMS_KEY_FILE`, `KEYFORGE_AUDIT_HMAC_KEY_FILE`, or `KEYFORGE_ROLE_MAP`, unless you pass `--include-configured`. That flag deletes those files only, not their parent directories. `--store` is rejected.
 
 ## Program extensibility
 

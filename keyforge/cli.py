@@ -5,6 +5,7 @@ from . import service as svc, audit, policy as pol, auth, server, __version__, B
 from .errors import KeyForgeError, Aborted, ValidationError
 from .models import parse_duration, now, parse_iso, iso
 from .store import Store, resolve_path
+from . import uninstall as uninstall_mod
 
 EXIT_OK, EXIT_ERR, EXIT_USAGE, EXIT_NOTFOUND, EXIT_VERIFY, EXIT_POLICY, EXIT_ABORT, EXIT_TAMPER, EXIT_LOCKED = 0, 1, 2, 3, 4, 5, 6, 7, 8
 
@@ -309,11 +310,29 @@ def build_parser():
     asub.add_parser("status", parents=[sub_common], help="show the current principal, never the token")
     asub.add_parser("logout", parents=[sub_common], help="delete the local token file")
 
+    un = add("uninstall", cmd_uninstall, "delete ~/.keyforge (store, KMS key, tokens); does not pip-uninstall", [destr])
+    un.add_argument("--include-configured", action="store_true",
+                    help="also delete KEYFORGE_STORE, token, KMS, audit HMAC, and role-map files outside ~/.keyforge")
+
     sv = add("serve", cmd_serve, "demo HTTP server: Bearer kf_... keys only (NOT for production)")
     sv.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1)")
     sv.add_argument("--port", type=int, default=8787, help="bind port (default 8787)")
     return p
 
+
+def cmd_uninstall(a, st=None):
+    """Delete ~/.keyforge. Does not remove the installed package."""
+    if getattr(a, "store", None):
+        raise ValidationError("uninstall removes ~/.keyforge only; do not pass --store")
+    _confirm(a, "Delete ~/.keyforge and every KeyForge file inside it? Secrets cannot be revealed after this")
+    result = uninstall_mod.run(dry_run=a.dry_run, include_configured=a.include_configured)
+    lines = ["[dry-run] would remove:" if a.dry_run else "removed:"]
+    lines += [f"  {p}" for p in result["removed"]] or ["  (nothing)"]
+    if result["skipped"]:
+        lines.append("left in place:")
+        lines += [f"  {p}" for p in result["skipped"]]
+    lines.append(f"package still installed; run: {result['package']}")
+    _out(a, result, "\n".join(lines))
 
 def cmd_serve(a, st=None):
     """Long-running; does not hold the store lock. Auth0 (if enabled) needs keys:verify."""
@@ -351,6 +370,8 @@ def main(argv=None) -> int:
         try:
             if args.cmd == "auth":
                 return cmd_auth(args) or EXIT_OK
+            if args.cmd == "uninstall":
+                return cmd_uninstall(args) or EXIT_OK
             if args.cmd == "serve":
                 # Do not hold the store lock for the life of the process; each request locks briefly.
                 return cmd_serve(args) or EXIT_OK
