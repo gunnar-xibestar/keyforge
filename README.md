@@ -9,7 +9,7 @@ An API key looks like `kf_<env>_<32 random chars>`. `create` and `rotate` print 
 
 Keys created before envelope support have a hash only. `verify` still works for them. `reveal` does not, because the secret was never retained. Rotate those keys if you need a recoverable copy.
 
-This is a single-operator tool. The local KMS is a software key or a PKCS#11 token you configure. It is not a cloud KMS, and Auth0 never receives API-key secrets.
+This is a single-operator tool. The local KMS is a software key or a PKCS#11 token you configure.
 
 ## Install
 
@@ -28,7 +28,7 @@ Store: `--store PATH`, `$KEYFORGE_STORE`, or `~/.keyforge/store.json`. Writes ar
 
 Without Auth0 configured, you are done — every command trusts the OS user.
 
-### 2. Optional Auth0 login
+### 2. Optional Auth0 login (for demo)
 
 Auth0 is **off** until all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE` are set. Setting only some of them is an error.
 
@@ -41,7 +41,7 @@ Auth0 is **off** until all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH
    `keys:read`, `keys:write`, `keys:verify`, `reveal:secret`
 5. Turn **off** “Add Permissions in the Access Token” (KeyForge reads a short `scope` claim only; see [Token diet](#token-diet)).
 
-**On your machine**
+**On your machine (prerequisites for using 'auth login')**
 
 ```
 export AUTH0_DOMAIN=your-tenant.us.auth0.com    # hostname only, no https://
