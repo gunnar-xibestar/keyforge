@@ -2,7 +2,7 @@
 from __future__ import annotations
 import ipaddress, fnmatch
 from datetime import datetime
-from . import crypto, audit, policy as pol
+from . import crypto, audit, policy as pol, kms
 from .errors import KeyForgeError, VerifyFailed, ValidationError, PolicyViolation
 from .models import ApiKey, ENVS, SCOPE_RE, now, iso, parse_iso, parse_duration
 
@@ -48,6 +48,7 @@ def create(store, *, name, owner, env="test", team=None, scopes=(), expires_at=N
                ip_allow=ip_allow, labels=labels, rotated_from=rotated_from)
     if dry_run:
         return k, None
+    k.secret_envelope = crypto.seal_secret(full, key_id=k.id, kms=kms.provider_for(store))
     store.put(k)
     audit.record(store, "create", k.id, name=name, env=env, scopes=scopes)
     return k, full
@@ -65,6 +66,23 @@ def list_keys(store, owner=None, team=None, env=None, status=None, scope=None, l
             if k.labels.get(lk) != lv: continue
         out.append(k)
     return sorted(out, key=lambda k: k.created_at)
+
+def reveal(store, ref) -> str:
+    """Return the envelope-encrypted secret. Revoked keys and legacy hash-only records fail closed.
+
+    The decrypted value is checked against the PBKDF2 hash before it is returned, and the
+    plaintext is not written to the store or the audit log.
+    """
+    k = store.get(ref)
+    if k.effective_status() == "revoked":
+        raise KeyForgeError("cannot reveal a revoked key")
+    if not k.secret_envelope:
+        raise KeyForgeError("no encrypted secret is stored for this key (legacy hash-only record)")
+    secret = crypto.open_secret(k.secret_envelope, key_id=k.id, kms=kms.provider_for(store))
+    if not crypto.check_secret(secret, k.hash):
+        raise KeyForgeError("decrypted secret does not match the stored hash; refusing to reveal")
+    audit.record(store, "reveal", k.id, kms=k.secret_envelope.get("wrapped_dek", {}).get("provider"))
+    return secret
 
 def scope_granted(granted, required) -> bool:
     return any(fnmatch.fnmatch(required, g) for g in granted)
@@ -271,6 +289,7 @@ _KEY_FIELDS = {  # field -> allowed types (None means optional)
     "revoked_reason": (str, type(None)), "revoked_at": (str, type(None)),
     "rotated_to": (str, type(None)), "rotated_from": (str, type(None)),
     "grace_until": (str, type(None)), "last_used_at": (str, type(None)),
+    "secret_envelope": (dict, type(None)),
 }
 _REQUIRED = ("id", "name", "prefix", "env", "owner", "scopes", "hash", "created_at")
 _STATUSES = ("active", "suspended", "revoked", "rotated")
@@ -331,6 +350,11 @@ def _validate_import_record(store, d, idx) -> dict:
     if crypto.prefix_of(d["prefix"]) != d["prefix"] or not d["prefix"].startswith(f"kf_{d['env']}_"):
         raise ValidationError(f"{where}: prefix does not match env")
     _validate_hash_record(d["hash"], where)
+    if "secret_envelope" in d and d["secret_envelope"] is not None:
+        try:
+            crypto.validate_envelope(d["secret_envelope"])
+        except ValidationError as e:
+            raise ValidationError(f"{where}: {e}")
     if d.get("rate_limit") is not None and d["rate_limit"] <= 0:
         raise ValidationError(f"{where}: rate limit must be positive")
     try:

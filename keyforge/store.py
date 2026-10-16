@@ -1,4 +1,7 @@
-"""JSON file store with atomic writes and an exclusive fcntl lock. Only salted hashes are persisted.
+"""JSON file store with atomic writes and an exclusive fcntl lock.
+
+Persisted for each key: a salted PBKDF2 hash (for verify) and, for keys created by
+this version, an AES-256-GCM envelope of the secret. Plaintext secrets are not written.
 
 Concurrency model: a ``Store(path, lock=True)`` takes an exclusive ``flock`` on ``<store>.lock``
 *before* reading the store and holds it until ``close()`` (or the end of a ``with`` block). The whole

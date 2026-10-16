@@ -1,7 +1,7 @@
-"""argparse CLI for KeyForge (MOCK - not for production)."""
+"""argparse CLI for KeyForge."""
 from __future__ import annotations
-import argparse, csv, io, json, sys
-from . import service as svc, audit, policy as pol, __version__, MOCK_BANNER
+import argparse, csv, io, json, os, sys
+from . import service as svc, audit, policy as pol, auth, __version__, BANNER
 from .errors import KeyForgeError, Aborted, ValidationError
 from .models import parse_duration, now, parse_iso, iso
 from .store import Store
@@ -88,6 +88,12 @@ def cmd_list(a, st):
 
 def cmd_show(a, st):
     k = st.get(a.key); _out(a, k.public(), _key_text(k))
+
+def cmd_reveal(a, st):
+    secret = svc.reveal(st, a.key)
+    st.save()
+    kid = st.get(a.key).id
+    _out(a, {"key_id": kid, "secret": secret}, f"SECRET:\n  {secret}")
 
 def cmd_verify(a, st):
     secret = a.secret
@@ -224,9 +230,9 @@ def build_parser():
     sub_common.add_argument("--store", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     sub_common.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="JSON output")
     p = argparse.ArgumentParser(prog="keyforge", parents=[common],
-        description=f"{MOCK_BANNER}. Manage mock enterprise API keys.",
-        epilog="Exit codes: 0 ok, 1 error, 2 usage/validation, 3 not found, 4 verify failed, 5 policy violation, 6 aborted, 7 audit log tampered, 8 store locked (timeout)")
-    p.add_argument("--version", action="version", version=f"keyforge {__version__} (MOCK)")
+        description=f"{BANNER}. Manage API keys. Secrets are envelope-encrypted at rest.",
+        epilog="Exit codes: 0 ok, 1 error, 2 usage/validation, 3 not found, 4 verify or authorization failed, 5 policy violation, 6 aborted, 7 audit log tampered, 8 store locked (timeout)")
+    p.add_argument("--version", action="version", version=f"keyforge {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
     def add(name, fn, help, parents=()):
         sp = sub.add_parser(name, help=help, parents=[sub_common, *parents]); sp.set_defaults(func=fn); return sp
@@ -249,6 +255,8 @@ def build_parser():
     l.add_argument("--format", choices=["table", "json", "csv"], default="table")
 
     s = add("show", cmd_show, "show key details"); s.add_argument("key", help="id, prefix or name")
+    rv_ = add("reveal", cmd_reveal, "reveal an envelope-encrypted secret (gated by Auth0 when enabled)")
+    rv_.add_argument("key", help="id, prefix or name")
     v = add("verify", cmd_verify, "verify a secret (use - to read from stdin)")
     v.add_argument("secret"); v.add_argument("--scope"); v.add_argument("--ip")
 
@@ -282,7 +290,7 @@ def build_parser():
     ps.add_argument("field"); ps.add_argument("value", help="lists comma-separated; 'none' clears")
     psub.add_parser("reset", parents=[sub_common, destr])
 
-    ex = add("export", cmd_export, "export keys (hashes only) to JSON")
+    ex = add("export", cmd_export, "export keys (hashes and envelopes, never plaintext) to JSON")
     ex.add_argument("-o", "--output"); ex.add_argument("--include-audit", action="store_true")
     im = add("import", cmd_import, "import an export file", [dry])
     im.add_argument("file"); im.add_argument("--overwrite", action="store_true")
@@ -291,7 +299,34 @@ def build_parser():
     pu = add("purge", cmd_purge, "delete expired / post-grace rotated keys", [destr])
     pu.add_argument("--older-than", help="only purge if expired longer than this (e.g. 7d)")
     pu.add_argument("--include-revoked", action="store_true")
+
+    az = add("auth", cmd_auth, "Auth0 device login, token status, logout")
+    asub = az.add_subparsers(dest="auth_cmd", required=True)
+    lg = asub.add_parser("login", parents=[sub_common],
+                         help="device-code login, or import a token response with --from-file")
+    lg.add_argument("--from-file", metavar="FILE",
+                    help="validate a token-endpoint JSON file instead of the device flow")
+    asub.add_parser("status", parents=[sub_common], help="show the current principal, never the token")
+    asub.add_parser("logout", parents=[sub_common], help="delete the local token file")
     return p
+
+def cmd_auth(a, st=None):
+    if a.auth_cmd == "login":
+        principal = auth.accept_token_file(a.from_file) if a.from_file else auth.device_login()
+        _out(a, {"logged_in": True, "sub": principal.sub, "scopes": sorted(principal.scopes),
+                 "expires_at": principal.exp},
+             f"logged in as {principal.sub}\nscopes: {' '.join(sorted(principal.scopes))}\n"
+             f"expires_at: {principal.exp}")
+        return
+    if a.auth_cmd == "logout":
+        auth.logout()
+        _out(a, {"logged_out": True}, "logged out")
+        return
+    info = auth.status()
+    text = "auth disabled" if not info.get("enabled") else (
+        f"logged in as {info['sub']} scopes={' '.join(info['scopes'])} expires_at={info['expires_at']}"
+        if info.get("logged_in") else f"not logged in: {info.get('reason')}")
+    _out(a, info, text)
 
 def main(argv=None) -> int:
     parser = build_parser()
@@ -299,12 +334,23 @@ def main(argv=None) -> int:
     for f in ("dry_run", "yes"):
         if not hasattr(args, f): setattr(args, f, False)
     try:
-        st = Store(args.store, lock=True)  # exclusive lock held for the whole read-modify-write
+        principal = auth.authorize(args)
+        actor_set = False
+        if principal is not None and "KEYFORGE_ACTOR" not in os.environ:
+            os.environ["KEYFORGE_ACTOR"] = principal.sub[:64]
+            actor_set = True
         try:
-            rc = args.func(args, st)
+            if args.cmd == "auth":
+                return cmd_auth(args) or EXIT_OK
+            st = Store(args.store, lock=True)  # exclusive lock held for the whole read-modify-write
+            try:
+                rc = args.func(args, st)
+            finally:
+                st.close()
+            return rc or EXIT_OK
         finally:
-            st.close()
-        return rc or EXIT_OK
+            if actor_set:
+                os.environ.pop("KEYFORGE_ACTOR", None)
     except KeyForgeError as e:
         if args.json: print(json.dumps({"error": str(e), "exit_code": e.exit_code}))
         else: print(f"keyforge: error: {e}", file=sys.stderr)

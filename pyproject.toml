@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "keyforge"
-version = "0.1.0"
-description = "MOCK enterprise API key management tool (NOT FOR PRODUCTION)"
+version = "0.2.0"
+description = "API key manager with envelope encryption, a local or PKCS#11 KMS, and optional Auth0"
 requires-python = ">=3.10"
 readme = "README.md"
 

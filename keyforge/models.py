@@ -51,9 +51,13 @@ class ApiKey:
     rotated_from: str | None = None
     grace_until: str | None = None
     last_used_at: str | None = None
+    secret_envelope: dict | None = None  # AES-GCM ciphertext; never a plaintext secret
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        if d.get("secret_envelope") is None:
+            d.pop("secret_envelope", None)
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "ApiKey":
@@ -73,6 +77,7 @@ class ApiKey:
 
     def public(self) -> dict:
         d = self.to_dict()
-        d.pop("hash")
+        d.pop("hash", None)
+        d.pop("secret_envelope", None)
         d["effective_status"] = self.effective_status()
         return d
