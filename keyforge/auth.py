@@ -512,7 +512,7 @@ def required_scope(args) -> str | None:
         return "keys:write" if sub in ("set", "reset") else "keys:read"
     table = {
         "list": "keys:read", "show": "keys:read", "audit": "keys:read", "export": "keys:read",
-        "verify": "keys:verify", "reveal": "reveal:secret",
+        "verify": "keys:verify", "serve": "keys:verify", "reveal": "reveal:secret",
         "create": "keys:write", "rotate": "keys:write", "revoke": "keys:write",
         "suspend": "keys:write", "resume": "keys:write", "update": "keys:write",
         "import": "keys:write", "purge": "keys:write",
