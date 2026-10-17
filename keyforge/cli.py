@@ -338,22 +338,41 @@ def cmd_serve(a, st=None):
     """Long-running; does not hold the store lock. Auth0 (if enabled) needs keys:verify."""
     return server.serve(str(resolve_path(getattr(a, "store", None))), host=a.host, port=a.port)
 
+def _auth_scope_text(info: dict) -> str:
+    scopes = " ".join(info.get("scopes") or []) or "-"
+    lines = [f"scopes: {scopes}"]
+    missing = info.get("missing_scopes") or []
+    if missing:
+        lines.append(
+            "missing_scopes: " + " ".join(missing)
+            + " (Auth0 granted fewer scopes than requested; add these API Permissions,"
+            + " authorize the app for them, and assign them to the user when RBAC is on."
+            + " Operator scopes are not the same as kf_... API-key scopes.)"
+        )
+    return "\n".join(lines)
+
+
 def cmd_auth(a, st=None):
     if a.auth_cmd == "login":
         principal = auth.accept_token_file(a.from_file) if a.from_file else auth.device_login()
-        _out(a, {"logged_in": True, "sub": principal.sub, "scopes": sorted(principal.scopes),
-                 "expires_at": principal.exp},
-             f"logged in as {principal.sub}\nscopes: {' '.join(sorted(principal.scopes))}\n"
-             f"expires_at: {principal.exp}")
+        grant = auth.scope_grant(principal)
+        payload = {"logged_in": True, "sub": principal.sub, "expires_at": principal.exp, **grant}
+        text = (f"logged in as {principal.sub}\n{_auth_scope_text(payload)}\n"
+                f"expires_at: {principal.exp}")
+        _out(a, payload, text)
         return
     if a.auth_cmd == "logout":
         auth.logout()
         _out(a, {"logged_out": True}, "logged out")
         return
     info = auth.status()
-    text = "auth disabled" if not info.get("enabled") else (
-        f"logged in as {info['sub']} scopes={' '.join(info['scopes'])} expires_at={info['expires_at']}"
-        if info.get("logged_in") else f"not logged in: {info.get('reason')}")
+    if not info.get("enabled"):
+        text = "auth disabled"
+    elif info.get("logged_in"):
+        text = (f"logged in as {info['sub']}\n{_auth_scope_text(info)}\n"
+                f"expires_at: {info['expires_at']}")
+    else:
+        text = f"not logged in: {info.get('reason')}"
     _out(a, info, text)
 
 def main(argv=None) -> int:

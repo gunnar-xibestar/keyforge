@@ -147,8 +147,26 @@ class AuthTests(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         status = json.loads(out)
         self.assertEqual(status["sub"], "auth0|alice")
+        self.assertEqual(status["missing_scopes"], ["offline_access"])  # JWT payload omits it
+        self.assertIn("keys:write", status["requested_scopes"])
         self.assertNotIn("access_token", status)
         self.assertNotIn(token, out)
+
+    def test_status_reports_scopes_auth0_withheld(self):
+        """Auth0 often returns only keys:read + offline_access when write/reveal are not granted."""
+        token = self.sign(self.payload(scope="keys:read offline_access"))
+        self._login(token)
+        rc, out, err = _run("--json", "auth", "status")
+        self.assertEqual(rc, 0, err)
+        status = json.loads(out)
+        self.assertEqual(status["scopes"], ["keys:read", "offline_access"])
+        self.assertEqual(status["missing_scopes"],
+                         ["keys:verify", "keys:write", "reveal:secret"])
+        rc, out, err = _run("auth", "status")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("missing_scopes:", out)
+        self.assertIn("keys:write", out)
+        self.assertIn("Auth0 granted fewer scopes", out)
 
     def test_overstuffed_and_expired_tokens_are_rejected(self):
         fat = self.sign(self.payload(permissions=["read:packets", "write:battery", "admin:all"]))

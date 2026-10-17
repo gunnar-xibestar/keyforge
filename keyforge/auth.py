@@ -230,6 +230,24 @@ def _check_scopes(scope: str) -> frozenset:
     return frozenset(parts)
 
 
+def requested_scopes() -> frozenset:
+    """Scopes KeyForge asks Auth0 for at device login (``AUTH0_SCOPES`` or the default set)."""
+    return _check_scopes(os.environ.get("AUTH0_SCOPES") or DEFAULT_SCOPES)
+
+
+def scope_grant(principal: Principal) -> dict:
+    """Compare requested scopes to what the principal actually has.
+
+    Auth0 returns the intersection of the request, API Permissions, app grants,
+    and (when RBAC is on) the user's assigned permissions. KeyForge does not
+    invent scopes; a short grant list means the tenant withheld them.
+    """
+    requested = sorted(requested_scopes())
+    granted = sorted(principal.scopes)
+    missing = sorted(set(requested) - principal.scopes)
+    return {"requested_scopes": requested, "scopes": granted, "missing_scopes": missing}
+
+
 def _role_map_scopes(sub: str) -> frozenset | None:
     path = os.environ.get("KEYFORGE_ROLE_MAP")
     if not path:
@@ -444,8 +462,9 @@ def load_principal() -> Principal:
 def device_login(*, prompt=None, sleep=time.sleep) -> Principal:
     """Run the device authorization flow and store a lean access token."""
     conf = _config()
+    # Preserve operator-configured order when AUTH0_SCOPES is set; otherwise the default string.
     scope = os.environ.get("AUTH0_SCOPES") or DEFAULT_SCOPES
-    _check_scopes(scope)  # refuse to ask Auth0 for a fat scope list
+    _check_scopes(scope)
     prompt = prompt or (lambda message: print(message, file=sys.stderr))
     started = _request_json(f"https://{conf['domain']}/oauth/device/code", {
         "client_id": conf["client_id"], "scope": scope, "audience": conf["audience"],
@@ -498,9 +517,12 @@ def status() -> dict:
     try:
         principal = load_principal()
     except AuthError as e:
-        return {"enabled": True, "logged_in": False, "reason": str(e)}
-    return {"enabled": True, "logged_in": True, "sub": principal.sub,
-            "scopes": sorted(principal.scopes), "expires_at": principal.exp}
+        return {"enabled": True, "logged_in": False, "reason": str(e),
+                "requested_scopes": sorted(requested_scopes())}
+    info = {"enabled": True, "logged_in": True, "sub": principal.sub,
+            "expires_at": principal.exp}
+    info.update(scope_grant(principal))
+    return info
 
 
 def required_scope(args) -> str | None:
