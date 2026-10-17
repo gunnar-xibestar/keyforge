@@ -80,7 +80,7 @@ class AuthTests(unittest.TestCase):
         self.store = os.path.join(self.d.name, "store.json")
         self._saved = {k: os.environ.get(k) for k in (
             "AUTH0_DOMAIN", "AUTH0_CLIENT_ID", "AUTH0_AUDIENCE", "AUTH0_CLIENT_SECRET",
-            "AUTH0_SCOPES", "KEYFORGE_TOKEN_FILE", "KEYFORGE_STORE", "KEYFORGE_ROLE_MAP",
+            "AUTH0_SCOPES", "KEYFORGE_TOKEN_FILE", "KEYFORGE_STORE",
             "KEYFORGE_ACTOR", "KEYFORGE_MAX_TOKEN_TTL")}
         os.environ["AUTH0_DOMAIN"] = DOMAIN
         os.environ["AUTH0_CLIENT_ID"] = CLIENT
@@ -88,7 +88,6 @@ class AuthTests(unittest.TestCase):
         os.environ["AUTH0_CLIENT_SECRET"] = SECRET
         os.environ["KEYFORGE_TOKEN_FILE"] = self.token_file
         os.environ["KEYFORGE_STORE"] = self.store
-        os.environ.pop("KEYFORGE_ROLE_MAP", None)
         os.environ.pop("AUTH0_SCOPES", None)
         os.environ.pop("KEYFORGE_ACTOR", None)
         self.opener = _Opener(self.jwks)
@@ -169,7 +168,7 @@ class AuthTests(unittest.TestCase):
         self.assertIn("keys:write", out)
         self.assertIn("Auth0 granted fewer scopes", out)
         self.assertIn("If Enable RBAC is on", out)
-        self.assertIn("KEYFORGE_ROLE_MAP", out)
+        self.assertIn("trailing spaces", out)
 
     def test_overstuffed_and_expired_tokens_are_rejected(self):
         fat = self.sign(self.payload(permissions=["read:packets", "write:battery", "admin:all"]))
@@ -236,18 +235,10 @@ class AuthTests(unittest.TestCase):
         self.assertEqual(json.loads(out)[0]["actor"], "auth0|alice")
         self.assertNotIn("KEYFORGE_ACTOR", os.environ)
 
-    def test_role_map_authorizes_without_a_permission_catalog(self):
-        role = os.path.join(self.d.name, "roles.json")
-        Path(role).write_text(json.dumps({"auth0|alice": ["reveal:secret"]}))
-        os.environ["KEYFORGE_ROLE_MAP"] = role
-        token = self.sign(self.payload(scope=""))
-        principal = self._login(token)
-        self.assertEqual(principal.scopes, frozenset({"reveal:secret"}))
-        rc, out, err = _run("--json", "auth", "status")
-        self.assertEqual(rc, 0, err)
-        status = json.loads(out)
-        self.assertEqual(status["scopes"], ["reveal:secret"])
-        self.assertNotIn("offline_access", status["missing_scopes"])
+    def test_empty_scope_stays_empty_and_permissions_claim_is_rejected(self):
+        """Authorization uses the token scope claim only; permissions[] is token-diet forbidden."""
+        principal = self._login(self.sign(self.payload(scope="")))
+        self.assertEqual(principal.scopes, frozenset())
         with self.assertRaises(AuthError) as cm:
             self._login(self.sign(self.payload(scope="", permissions=["reveal:secret"])))
         self.assertIn("permissions", str(cm.exception))
