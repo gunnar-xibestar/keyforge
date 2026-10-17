@@ -147,8 +147,9 @@ class AuthTests(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         status = json.loads(out)
         self.assertEqual(status["sub"], "auth0|alice")
-        self.assertEqual(status["missing_scopes"], ["offline_access"])  # JWT payload omits it
+        self.assertEqual(status["missing_scopes"], [])  # offline_access is not a command scope
         self.assertIn("keys:write", status["requested_scopes"])
+        self.assertIn("offline_access", status["requested_scopes"])
         self.assertNotIn("access_token", status)
         self.assertNotIn(token, out)
 
@@ -167,6 +168,8 @@ class AuthTests(unittest.TestCase):
         self.assertIn("missing_scopes:", out)
         self.assertIn("keys:write", out)
         self.assertIn("Auth0 granted fewer scopes", out)
+        self.assertIn("If Enable RBAC is on", out)
+        self.assertIn("KEYFORGE_ROLE_MAP", out)
 
     def test_overstuffed_and_expired_tokens_are_rejected(self):
         fat = self.sign(self.payload(permissions=["read:packets", "write:battery", "admin:all"]))
@@ -240,6 +243,11 @@ class AuthTests(unittest.TestCase):
         token = self.sign(self.payload(scope=""))
         principal = self._login(token)
         self.assertEqual(principal.scopes, frozenset({"reveal:secret"}))
+        rc, out, err = _run("--json", "auth", "status")
+        self.assertEqual(rc, 0, err)
+        status = json.loads(out)
+        self.assertEqual(status["scopes"], ["reveal:secret"])
+        self.assertNotIn("offline_access", status["missing_scopes"])
         with self.assertRaises(AuthError) as cm:
             self._login(self.sign(self.payload(scope="", permissions=["reveal:secret"])))
         self.assertIn("permissions", str(cm.exception))

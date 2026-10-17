@@ -241,10 +241,13 @@ def scope_grant(principal: Principal) -> dict:
     Auth0 returns the intersection of the request, API Permissions, app grants,
     and (when RBAC is on) the user's assigned permissions. KeyForge does not
     invent scopes; a short grant list means the tenant withheld them.
+
+    ``offline_access`` is requested so Auth0 may issue a refresh token; it is not
+    a command-authorization scope, so it is omitted from ``missing_scopes``.
     """
     requested = sorted(requested_scopes())
     granted = sorted(principal.scopes)
-    missing = sorted(set(requested) - principal.scopes)
+    missing = sorted((set(requested) - principal.scopes) - {"offline_access"})
     return {"requested_scopes": requested, "scopes": granted, "missing_scopes": missing}
 
 

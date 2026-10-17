@@ -345,9 +345,10 @@ def _auth_scope_text(info: dict) -> str:
     if missing:
         lines.append(
             "missing_scopes: " + " ".join(missing)
-            + " (Auth0 granted fewer scopes than requested; add these API Permissions,"
-            + " authorize the app for them, and assign them to the user when RBAC is on."
-            + " Operator scopes are not the same as kf_... API-key scopes.)"
+            + " (Auth0 granted fewer scopes than requested; check API Permissions and the"
+            + " app's Application Access grants. If Enable RBAC is on, also assign them to"
+            + " the user or role. Or set KEYFORGE_ROLE_MAP. Operator scopes are not the"
+            + " same as kf_... API-key scopes.)"
         )
     return "\n".join(lines)
 
