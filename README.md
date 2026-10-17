@@ -38,8 +38,10 @@ Auth0 is **off** until all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH
 2. Create a **Native** application (device-code friendly). Copy its **Client ID**.
 3. Enable the **Device Code** grant for that application.
 4. Authorize the application for the API. Add these API scopes (Auth0 → APIs → your API → Permissions):  
-   `keys:read`, `keys:write`, `keys:verify`, `reveal:secret`
-5. Turn **off** “Add Permissions in the Access Token” (KeyForge reads a short `scope` claim only; see [Token diet](#token-diet)).
+   `keys:read`, `keys:write`, `keys:verify`, `reveal:secret`  
+   These are **operator** scopes for the CLI. They are not `kf_...` API-key scopes such as `read:packets`.
+5. Turn **off** “Add Permissions in the Access Token” (KeyForge reads a short `scope` claim only; see [Token diet](#token-diet)). If **Enable RBAC** is on, also assign those permissions to the Auth0 user (or role) that will run device login — Auth0 only puts granted permissions into `scope`.
+6. Under Applications → your Native app → APIs, authorize the app for that API and allow the same permissions.
 
 **On your machine**
 
@@ -56,6 +58,8 @@ keyforge auth status
 ```
 
 `auth login` prints a URL and a short code. Open the URL, enter the code, approve. KeyForge polls Auth0, then stores a lean access token (and refresh token when issued) in `KEYFORGE_TOKEN_FILE` or `~/.keyforge/tokens.json` (mode 0600). `auth status` shows the principal and scopes — never the token. `auth logout` deletes the file.
+
+Auth0 returns the **intersection** of what KeyForge requested (`AUTH0_SCOPES` or the default set) and what the tenant actually grants. If `auth status` shows only `keys:read` and `offline_access`, the other permissions are missing in the Auth0 API, app grant, or user assignment — KeyForge is not dropping them. Login and status print `missing_scopes` when that happens.
 
 Until you log in, gated commands fail. After login, each command needs the matching Auth0 scope (see [Auth0](#auth0)). API-key secrets are never sent to Auth0.
 
