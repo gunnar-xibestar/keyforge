@@ -220,13 +220,27 @@ class Pkcs11Token:
                 f"key={self.key_label!r})")
 
     def _session(self):
+        problems = []
         try:
             import pkcs11
         except ImportError:
+            pkcs11 = None
+            problems.append(
+                "python-pkcs11 is not installed "
+                "(pip install python-pkcs11 — not the unrelated PyPI package named pkcs11)"
+            )
+        if not os.path.exists(self.module_path):
+            problems.append(
+                f"PKCS#11 module not found at {self.module_path!r}; "
+                "install SoftHSM (Debian/Ubuntu: sudo apt install softhsm2; "
+                "module often /usr/lib/softhsm/libsofthsm2.so or "
+                "/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so) "
+                "or point KEYFORGE_PKCS11_MODULE at a hardware vendor .so "
+                "(SoftHSM also needs SOFTHSM2_CONF)"
+            )
+        if problems:
             raise KeyForgeError(
-                "PKCS#11 provider requires the python-pkcs11 package. "
-                "Point KEYFORGE_PKCS11_MODULE at a module such as "
-                "/usr/lib/softhsm/libsofthsm2.so (SoftHSM) or a hardware vendor library."
+                "PKCS#11 provider is not ready: " + "; ".join(problems) + ". See README PKCS#11."
             )
         try:
             lib = pkcs11.lib(self.module_path)

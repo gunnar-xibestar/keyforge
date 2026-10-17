@@ -22,7 +22,14 @@ pip install -e .          # provides the `keyforge` command
 python -m keyforge ...    # or run without installing
 ```
 
-PKCS#11 is optional. Install `python-pkcs11` and a module such as SoftHSM (`softhsm2`) only if you set `KEYFORGE_KMS_PROVIDER=pkcs11`.
+PKCS#11 is optional and off unless `KEYFORGE_KMS_PROVIDER=pkcs11`. Then you need both:
+
+```
+pip install python-pkcs11          # not the unrelated PyPI package named pkcs11
+sudo apt install softhsm2          # or another PKCS#11 .so (hardware token)
+```
+
+If either is missing, the first PKCS#11 operation fails with install hints. SoftHSM setup: [PKCS#11](#pkcs11).
 
 Store: `--store PATH`, `$KEYFORGE_STORE`, or `~/.keyforge/store.json`. Writes are atomic, mode 0600, under an exclusive lock.
 
