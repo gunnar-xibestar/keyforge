@@ -19,10 +19,8 @@ Token diet
   Auth0's "Add Permissions in the Access Token" setting.
 - ``exp - iat`` must be between 1 second and ``KEYFORGE_MAX_TOKEN_TTL`` (default
   3600, and it cannot be raised above 3600).
-- Authorization uses the space-separated ``scope`` claim (at most 8 short scopes)
-  or, when ``KEYFORGE_ROLE_MAP`` is set, a local subject-to-scopes map. The map
-  wins and the token does not carry the permission catalog. KeyForge does not
-  call the Auth0 Management API or ``/userinfo``.
+- Authorization uses the space-separated ``scope`` claim (at most 8 short scopes).
+  KeyForge does not call the Auth0 Management API or ``/userinfo``.
 
 What Auth0 does not do: it never sees API-key secrets. Those stay inside the
 envelope encrypted by the local or PKCS#11 KMS.
@@ -251,32 +249,6 @@ def scope_grant(principal: Principal) -> dict:
     return {"requested_scopes": requested, "scopes": granted, "missing_scopes": missing}
 
 
-def _role_map_scopes(sub: str) -> frozenset | None:
-    path = os.environ.get("KEYFORGE_ROLE_MAP")
-    if not path:
-        return None
-    path = os.path.expanduser(path)
-    try:
-        raw = Path(path).read_text()
-    except OSError as e:
-        raise AuthError(f"role map unreadable: {e.strerror}")
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        raise AuthError("role map is not JSON")
-    if not isinstance(data, dict):
-        raise AuthError("role map must be a JSON object of subject to scopes")
-    scopes = data.get(sub, [])
-    if not isinstance(scopes, list) or any(not isinstance(s, str) for s in scopes):
-        raise AuthError("role map entry must be a list of scope strings")
-    if len(scopes) > 32:
-        raise AuthError("role map entry has too many scopes")
-    for s in scopes:
-        if not _SCOPE.match(s):
-            raise AuthError("role map contains an illegal scope")
-    return frozenset(scopes)
-
-
 def validate_access_token(token: str, *, now: float | None = None) -> Principal:
     """Verify signature, issuer, audience, lifetime, and the token-diet claim set."""
     conf = _config()
@@ -348,9 +320,7 @@ def validate_access_token(token: str, *, now: float | None = None) -> Principal:
         raise AuthError("access token is not yet valid")
     if exp < current - CLOCK_SKEW:
         raise TokenExpired("access token expired")
-    token_scopes = _check_scopes(payload.get("scope", ""))
-    mapped = _role_map_scopes(sub)
-    scopes = token_scopes if mapped is None else mapped
+    scopes = _check_scopes(payload.get("scope", ""))
     return Principal(sub=sub, scopes=scopes, exp=exp)
 
 

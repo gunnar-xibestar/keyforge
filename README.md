@@ -66,7 +66,7 @@ keyforge auth status
 
 `auth login` prints a URL and a short code. Open the URL, enter the code, approve. KeyForge polls Auth0, then stores a lean access token (and refresh token when issued) in `KEYFORGE_TOKEN_FILE` or `~/.keyforge/tokens.json` (mode 0600). `auth status` shows the principal and scopes — never the token. `auth logout` deletes the file.
 
-Auth0 returns the **intersection** of what KeyForge requested (`AUTH0_SCOPES` or the default set) and what the tenant actually grants. If `auth status` shows only `keys:read` and `offline_access`, the other permissions are missing in the Auth0 API, app grant, or user assignment — KeyForge is not dropping them. Login and status print `missing_scopes` when that happens.
+Auth0 returns the **intersection** of what KeyForge requested (`AUTH0_SCOPES` or the default set) and what the tenant actually grants. Permission names must match exactly (trailing spaces in Auth0 will silently drop a scope). If `auth status` shows only `keys:read` and `offline_access`, the other permissions are missing in the Auth0 API, app grant, or user assignment — KeyForge is not dropping them. Login and status print `missing_scopes` when that happens.
 
 Until you log in, gated commands fail. After login, each command needs the matching Auth0 scope (see [Auth0](#auth0)). API-key secrets are never sent to Auth0.
 
@@ -300,7 +300,6 @@ python -m unittest discover -s tests -v
 | `AUTH0_CLIENT_SECRET` | optional; environment only |
 | `AUTH0_SCOPES` | override the small scope string requested at login |
 | `KEYFORGE_TOKEN_FILE` | where the lean access token and refresh token are stored |
-| `KEYFORGE_ROLE_MAP` | local subject-to-scopes JSON |
 | `KEYFORGE_MAX_TOKEN_TTL` | access-token lifetime cap in seconds, 60–3600 |
 | `KEYFORGE_PBKDF2_ITERS` | hash iterations (default 200000) |
 | `KEYFORGE_AUDIT_HMAC_KEY_FILE` | optional audit HMAC key |
@@ -320,7 +319,7 @@ Access tokens stay small. These rules are enforced in `keyforge/auth.py` wheneve
 | `exp - iat` is longer than `KEYFORGE_MAX_TOKEN_TTL` (default 3600; the setting cannot be raised above 3600) | `max_token_ttl()` / `DEFAULT_MAX_TTL` |
 | signature, issuer (`https://$AUTH0_DOMAIN/`), or audience does not match | JWKS verify + `AUTH0_DOMAIN` / `AUTH0_AUDIENCE` |
 | expired (a refresh token, stored separately, is exchanged once for a new access token that must pass the same checks) | `TokenExpired` → `_refresh` |
-| authorization uses the short `scope` claim; if `KEYFORGE_ROLE_MAP` points at `subject -> [scopes]`, those local scopes win (protect the map like the KMS file) | `_role_map_scopes` |
+| authorization uses the short `scope` claim only (Auth0 must grant the operator permissions you need) | `_check_scopes` |
 | refresh tokens are opaque, capped at 2048 bytes, and are never accepted as access tokens | `MAX_REFRESH_TOKEN_BYTES` |
 
 ## Uninstall
@@ -333,7 +332,7 @@ pip uninstall keyforge
 
 `uninstall` deletes the data directory `~/.keyforge`: the store, the local KMS key that lives beside it, tokens, and anything else in that directory. It overwrites regular files before unlinking them. It does not remove the `keyforge` command. Run `pip uninstall keyforge` after the data is gone.
 
-It refuses a symlinked data directory, a directory you do not own, and a store that another process has locked. Symlinks inside the directory are removed without deleting their targets. A file outside `~/.keyforge` is left alone, including one named by `KEYFORGE_STORE`, `KEYFORGE_TOKEN_FILE`, `KEYFORGE_KMS_KEY_FILE`, `KEYFORGE_AUDIT_HMAC_KEY_FILE`, or `KEYFORGE_ROLE_MAP`, unless you pass `--include-configured`. That flag deletes those files only, not their parent directories. `--store` is rejected.
+It refuses a symlinked data directory, a directory you do not own, and a store that another process has locked. Symlinks inside the directory are removed without deleting their targets. A file outside `~/.keyforge` is left alone, including one named by `KEYFORGE_STORE`, `KEYFORGE_TOKEN_FILE`, `KEYFORGE_KMS_KEY_FILE`, or `KEYFORGE_AUDIT_HMAC_KEY_FILE`, unless you pass `--include-configured`. That flag deletes those files only, not their parent directories. `--store` is rejected.
 
 ## Program extensibility
 

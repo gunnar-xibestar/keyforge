@@ -312,7 +312,7 @@ def build_parser():
 
     un = add("uninstall", cmd_uninstall, "delete ~/.keyforge (store, KMS key, tokens); does not pip-uninstall", [destr])
     un.add_argument("--include-configured", action="store_true",
-                    help="also delete KEYFORGE_STORE, token, KMS, audit HMAC, and role-map files outside ~/.keyforge")
+                    help="also delete KEYFORGE_STORE, token, KMS, and audit HMAC files outside ~/.keyforge")
 
     sv = add("serve", cmd_serve, "demo HTTP server: Bearer kf_... keys only (NOT for production)")
     sv.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1)")
@@ -346,9 +346,9 @@ def _auth_scope_text(info: dict) -> str:
         lines.append(
             "missing_scopes: " + " ".join(missing)
             + " (Auth0 granted fewer scopes than requested; check API Permissions and the"
-            + " app's Application Access grants. If Enable RBAC is on, also assign them to"
-            + " the user or role. Or set KEYFORGE_ROLE_MAP. Operator scopes are not the"
-            + " same as kf_... API-key scopes.)"
+            + " app's Application Access grants (permission names must match exactly,"
+            + " with no trailing spaces). If Enable RBAC is on, also assign them to"
+            + " the user or role. Operator scopes are not the same as kf_... API-key scopes.)"
         )
     return "\n".join(lines)
 
