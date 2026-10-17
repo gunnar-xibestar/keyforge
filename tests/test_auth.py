@@ -168,6 +168,8 @@ class AuthTests(unittest.TestCase):
         self.assertIn("missing_scopes:", out)
         self.assertIn("keys:write", out)
         self.assertIn("Auth0 granted fewer scopes", out)
+        self.assertIn("If Enable RBAC is on", out)
+        self.assertIn("KEYFORGE_ROLE_MAP", out)
 
     def test_overstuffed_and_expired_tokens_are_rejected(self):
         fat = self.sign(self.payload(permissions=["read:packets", "write:battery", "admin:all"]))
