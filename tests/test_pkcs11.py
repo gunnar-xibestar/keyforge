@@ -99,6 +99,39 @@ class Pkcs11ConfigTests(unittest.TestCase):
             else:
                 os.environ["KEYFORGE_KMS_PROVIDER"] = saved
 
+    def test_missing_module_file_explains_softhsm_install(self):
+        from keyforge.kms import Pkcs11Token
+        tok = Pkcs11Token("/nonexistent/libsofthsm2.so", "t", "pin", "k")
+        with self.assertRaises(KeyForgeError) as cm:
+            tok._session()
+        msg = str(cm.exception)
+        self.assertIn("not found", msg)
+        self.assertIn("apt install softhsm2", msg)
+        self.assertIn("SOFTHSM2_CONF", msg)
+
+    def test_missing_python_binding_explains_pip_package(self):
+        import builtins
+        from keyforge.kms import Pkcs11Token
+        real_import = builtins.__import__
+
+        def block_pkcs11(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "pkcs11" or (isinstance(name, str) and name.startswith("pkcs11.")):
+                raise ImportError("blocked for test")
+            return real_import(name, globals, locals, fromlist, level)
+
+        # Use a path that exists so the failure is the binding, not the .so.
+        tok = Pkcs11Token(__file__, "t", "pin", "k")
+        builtins.__import__ = block_pkcs11
+        try:
+            with self.assertRaises(KeyForgeError) as cm:
+                tok._session()
+        finally:
+            builtins.__import__ = real_import
+        msg = str(cm.exception)
+        self.assertIn("pip install python-pkcs11", msg)
+        self.assertIn("not the unrelated", msg)
+        self.assertNotIn("not found", msg)
+
 
 if __name__ == "__main__":
     unittest.main()
