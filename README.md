@@ -266,6 +266,14 @@ Same shape as `/whoami`, plus `"required_scope": "read:packets"`. `verify` is ca
 
 **Flow in one line:** create secret → serve → open `/health` → deny bare `/whoami` → accept Bearer on `/whoami` → require `read:packets` on `/packets`.
 
+| status | when |
+|---|---|
+| **200** | `/health` ok; `/whoami` or `/packets` with a valid secret (and scope when required) |
+| **401** | missing or invalid `Authorization: Bearer …` |
+| **403** | Bearer present but `verify` failed (bad secret, revoked/suspended, missing scope, IP deny) |
+| **404** | unknown path |
+| **405** | method other than `GET` |
+
 ## Tests
 
 ```
