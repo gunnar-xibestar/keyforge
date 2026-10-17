@@ -314,6 +314,10 @@ def build_parser():
     un.add_argument("--include-configured", action="store_true",
                     help="also delete KEYFORGE_STORE, token, KMS, and audit HMAC files outside ~/.keyforge")
 
+    km = add("kms", cmd_kms, "show which KMS provider is active (create/reveal use it; auth does not)")
+    kmsub = km.add_subparsers(dest="kms_cmd", required=True)
+    kmsub.add_parser("status", parents=[sub_common], help="provider, readiness, and config (never prints the PIN)")
+
     sv = add("serve", cmd_serve, "demo HTTP server: Bearer kf_... keys only (NOT for production)")
     sv.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1)")
     sv.add_argument("--port", type=int, default=8787, help="bind port (default 8787)")
@@ -333,6 +337,31 @@ def cmd_uninstall(a, st=None):
         lines += [f"  {p}" for p in result["skipped"]]
     lines.append(f"package still installed; run: {result['package']}")
     _out(a, result, "\n".join(lines))
+
+
+def cmd_kms(a, st=None):
+    """Report the active KMS. Does not hold the store lock."""
+    from . import kms as kms_mod
+    info = kms_mod.status(store_path=str(resolve_path(getattr(a, "store", None))))
+    lines = [f"provider: {info.get('provider')}", f"ready: {info.get('ready')}"]
+    if info.get("key_file") is not None:
+        lines.append(f"key_file: {info['key_file']} (exists={info.get('key_file_exists')})")
+    if info.get("provider") == "pkcs11":
+        lines.append(f"module: {info.get('module')} (exists={info.get('module_exists')})")
+        lines.append(f"token: {info.get('token')}")
+        lines.append(f"key_label: {info.get('key_label')}")
+        lines.append(f"pin_set: {info.get('pin_set')}")
+        lines.append(f"python_pkcs11: {info.get('python_pkcs11')}")
+        if info.get("softhsm2_conf") is not None:
+            lines.append(f"SOFTHSM2_CONF: {info['softhsm2_conf']}")
+    if info.get("missing"):
+        lines.append("missing: " + ", ".join(info["missing"]))
+    if info.get("error"):
+        lines.append(f"error: {info['error']}")
+    if info.get("note"):
+        lines.append(f"note: {info['note']}")
+    _out(a, info, "\n".join(lines))
+
 
 def cmd_serve(a, st=None):
     """Long-running; does not hold the store lock. Auth0 (if enabled) needs keys:verify."""
@@ -392,6 +421,8 @@ def main(argv=None) -> int:
                 return cmd_auth(args) or EXIT_OK
             if args.cmd == "uninstall":
                 return cmd_uninstall(args) or EXIT_OK
+            if args.cmd == "kms":
+                return cmd_kms(args) or EXIT_OK
             if args.cmd == "serve":
                 # Do not hold the store lock for the life of the process; each request locks briefly.
                 return cmd_serve(args) or EXIT_OK

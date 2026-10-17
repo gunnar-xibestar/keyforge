@@ -500,7 +500,7 @@ def status() -> dict:
 
 def required_scope(args) -> str | None:
     cmd = getattr(args, "cmd", None)
-    if cmd in ("auth", "uninstall"):
+    if cmd in ("auth", "uninstall", "kms"):
         return None
     if cmd == "policy":
         sub = getattr(args, "policy_cmd", None) or "show"
