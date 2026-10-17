@@ -41,9 +41,10 @@ Auth0 is **off** until all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH
    `keys:read`, `keys:write`, `keys:verify`, `reveal:secret`
 5. Turn **off** “Add Permissions in the Access Token” (KeyForge reads a short `scope` claim only; see [Token diet](#token-diet)).
 
-**On your machine (prerequisites for using 'auth login')**
+**On your machine**
 
 ```
+# prerequisites for using 'auth login'
 export AUTH0_DOMAIN=your-tenant.us.auth0.com    # hostname only, no https://
 export AUTH0_CLIENT_ID=your_native_app_client_id
 export AUTH0_AUDIENCE=https://keyforge.local/api
