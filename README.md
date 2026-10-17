@@ -90,6 +90,7 @@ Full variable list: [Environment](#environment). Access-token size rules: [Token
 | `export [-o FILE] [--include-audit]` / `import FILE [--overwrite] [--allow-unrevoke] [--dry-run]` | hashes and envelopes, never plaintext |
 | `purge [--older-than 7d] [--include-revoked] [--dry-run] [--yes]` | delete expired and post-grace keys |
 | `auth login [--from-file FILE]` / `auth status` / `auth logout` | device login, principal status, logout. Status never prints tokens. With Auth0 unset, status reports auth disabled |
+| `kms status` | show active KMS provider and whether it is ready (never prints the PKCS#11 PIN). Auth login does not use the KMS |
 | `serve [--host 127.0.0.1] [--port 8787]` | **demo** HTTP server: clients authenticate only with `Authorization: Bearer kf_...`. Not for production |
 | `uninstall [--dry-run] [--yes] [--include-configured]` | delete `~/.keyforge` only. See [Uninstall](#uninstall) |
 
@@ -107,7 +108,11 @@ The on-disk hash record is unchanged: `algo`, `iterations`, `salt`, `hash`. The 
 
 ## KMS
 
-`KEYFORGE_KMS_PROVIDER` selects the wrapper. Default is `local`.
+`KEYFORGE_KMS_PROVIDER` selects the wrapper. Default is `local`. **Export** it (a bare `KEYFORGE_KMS_PROVIDER=pkcs11` line does not put the variable in the environment for `keyforge`). Auth0 `auth login` / `auth status` do **not** use the KMS — only `create`, `rotate`, and `reveal` (and envelope import) do. Check the active provider with:
+
+```
+keyforge kms status
+```
 
 | provider | what wraps the data key |
 |---|---|
@@ -141,6 +146,7 @@ export KEYFORGE_PKCS11_TOKEN=keyforge
 export KEYFORGE_PKCS11_PIN="$PIN"
 export KEYFORGE_PKCS11_KEY_LABEL=keyforge-kek
 export KEYFORGE_PKCS11_CREATE_KEY=1
+keyforge kms status   # provider: pkcs11, ready: true (or lists what is missing)
 ```
 
 `Pkcs11Kms` talks to any object with `wrap(label, dek, aad)` / `unwrap(label, blob, aad)`. `Pkcs11Token` is the real session. `FakePkcs11Token` is the in-memory stand-in the unit tests use when they are not pointing at SoftHSM. Point the environment variables above at a hardware module to use one; no code change is required.
