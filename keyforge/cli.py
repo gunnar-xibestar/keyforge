@@ -346,6 +346,10 @@ def cmd_kms(a, st=None):
     lines = [f"provider: {info.get('provider')}", f"ready: {info.get('ready')}"]
     if info.get("key_file") is not None:
         lines.append(f"key_file: {info['key_file']} (exists={info.get('key_file_exists')})")
+        if info.get("key_file_mode") is not None:
+            lines.append(f"key_file_mode: {info['key_file_mode']}")
+        lines.append(f"same_directory_as_store: {info.get('same_directory_as_store')}")
+        lines.append(f"python_pkcs11: {info.get('python_pkcs11')}")
     if info.get("provider") == "pkcs11":
         lines.append(f"module: {info.get('module')} (exists={info.get('module_exists')})")
         lines.append(f"token: {info.get('token')}")
@@ -358,6 +362,8 @@ def cmd_kms(a, st=None):
         lines.append("missing: " + ", ".join(info["missing"]))
     if info.get("error"):
         lines.append(f"error: {info['error']}")
+    for warning in info.get("warnings") or []:
+        lines.append(f"warning: {warning}")
     if info.get("note"):
         lines.append(f"note: {info['note']}")
     _out(a, info, "\n".join(lines))

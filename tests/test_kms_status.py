@@ -41,6 +41,8 @@ class KmsStatusTests(unittest.TestCase):
         self.assertIn("provider: local", out)
         self.assertIn("ready: True", out)
         self.assertIn("kms-master.key", out)
+        self.assertIn("same_directory_as_store: True", out)
+        self.assertIn("software KEK", out)
         self.assertIn("auth login does not use the KMS", out)
 
     def test_pkcs11_reports_missing_without_export_confusion(self):
