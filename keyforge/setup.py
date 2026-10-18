@@ -159,7 +159,6 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     for line in _BANNER.splitlines():
         echo(line)
     echo("")
-    echo("progress: KMS provider")
     echo("KMS provider (KEYFORGE_KMS_PROVIDER). Setup saves the answer; a bare assignment in a file is not enough.")
     echo("")
     for i, name in enumerate(_PROVIDERS):
@@ -185,8 +184,6 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         if key_file:
             saved["KEYFORGE_KMS_KEY_FILE"] = key_file
     elif choice == "pkcs11":
-        echo("progress: SoftHSM token")
-        echo("")
         echo("Create a new token:")
         echo("  mkdir -p \"$HOME/.keyforge/softhsm/tokens\"")
         echo("  printf 'directories.tokendir = %s\\nobjectstore.backend = file\\nlog.level = ERROR\\n' \\")
@@ -239,7 +236,6 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     _echo_kms_status(echo, saved)
 
     echo("")
-    echo("progress: Auth0")
     existing_auth = {name: os.environ.get(name, "").strip() for name in (
         "AUTH0_DOMAIN", "AUTH0_CLIENT_ID", "AUTH0_AUDIENCE")}
     if all(existing_auth.values()):
@@ -304,7 +300,6 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
 
     echo("")
     echo("")
-    echo("progress: login")
     echo("Login. Username first, then password.")
     echo("")
     echo("Username is the database user (User Management → Users), usually the email. It is not the Client ID.")
