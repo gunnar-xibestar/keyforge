@@ -29,15 +29,24 @@ _PROVIDER_TEXT = {
         "Anyone who can read that file and the store can reveal secrets. "
         "Put KEYFORGE_KMS_KEY_FILE outside the store directory for a separate permission boundary."
     ),
-    "pkcs11": (
-        "pkcs11 — AES key stays on the token and is not exported. "
-        "Module: KEYFORGE_PKCS11_MODULE (SoftHSM is often /usr/lib/softhsm/libsofthsm2.so; "
-        "`dpkg -L softhsm2 | grep '\\.so$'`). "
-        "Token label: KEYFORGE_PKCS11_TOKEN (`softhsm2-util --show-slots`). "
-        "User PIN: KEYFORGE_PKCS11_PIN (the PIN from --init-token, not the SO PIN). "
-        "Key label: KEYFORGE_PKCS11_KEY_LABEL. "
-        "SOFTHSM2_CONF points at the softhsm2.conf whose tokendir you created."
-    ),
+    "pkcs11": "\n".join((
+        "pkcs11 — AES key stays on the token and is not exported.",
+        "",
+        "Module: KEYFORGE_PKCS11_MODULE",
+        "  SoftHSM is often /usr/lib/softhsm/libsofthsm2.so",
+        "  dpkg -L softhsm2 | grep '\\.so$'",
+        "",
+        "Token label: KEYFORGE_PKCS11_TOKEN",
+        "  softhsm2-util --show-slots",
+        "",
+        "User PIN: KEYFORGE_PKCS11_PIN",
+        "  the PIN from --init-token, not the SO PIN",
+        "",
+        "Key label: KEYFORGE_PKCS11_KEY_LABEL",
+        "",
+        "SOFTHSM2_CONF",
+        "  the softhsm2.conf whose tokendir you created",
+    )),
     "memory": (
         "memory — replaces pkcs11 and local for unit tests. "
         "The key lives in the process (KEYFORGE_KMS_MEMORY_KEY may pin 64 hex chars). "
@@ -136,7 +145,8 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         if i:
             echo("")
         echo(f"  {name}")
-        echo(f"    {_PROVIDER_TEXT[name]}")
+        for line in _PROVIDER_TEXT[name].splitlines():
+            echo(f"    {line}" if line else "")
     echo("")
     choice = _ask(read_line, "KEYFORGE_KMS_PROVIDER [local]: ").lower() or "local"
     if choice not in _PROVIDERS:
