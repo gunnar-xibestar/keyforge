@@ -156,8 +156,11 @@ class SetupTests(unittest.TestCase):
         with redirect_stderr(err):
             setup_mod.load_env_file()
         self.assertEqual(os.environ["KEYFORGE_KMS_PROVIDER"], "memory")
-        self.assertIn("KEYFORGE_KMS_PROVIDER is 'memory' from the environment", err.getvalue())
-        self.assertIn("keyforge.env has 'local'", err.getvalue())
+        self.assertIn("failure: shell value hid keyforge.env", err.getvalue())
+        self.assertIn("variable: KEYFORGE_KMS_PROVIDER", err.getvalue())
+        self.assertIn("environment: memory", err.getvalue())
+        self.assertIn("keyforge.env: local", err.getvalue())
+        self.assertIn("fix: unset KEYFORGE_KMS_PROVIDER", err.getvalue())
 
 
 if __name__ == "__main__":
