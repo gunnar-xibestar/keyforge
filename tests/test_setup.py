@@ -56,6 +56,7 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(self.lines[:3], ["'", "'", "'"])
         self.assertEqual(self.lines[-5:], ["'", "'", "'", "'", "'"])
         text = "\n".join(self.lines)
+        self.assertIn("|_|\\_\\___|\\__, |_|", text)
         self.assertIn("software KEK", text)
         local = text.index("  local\n")
         pkcs = text.index("  pkcs11\n")

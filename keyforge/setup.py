@@ -12,6 +12,15 @@ from .errors import AuthError, KeyForgeError
 
 _PROVIDERS = ("local", "pkcs11", "memory")
 
+_BANNER = r"""
+ _  __          _____
+| |/ /___ _   _|  ___|__  _ __ __ _  ___
+| ' // _ \ | | | |_ / _ \| '__/ _` |/ _ \
+| . \  __/ |_| |  _| (_) | | | (_| |  __/
+|_|\_\___|\__, |_|  \___/|_|  \__, |\___|
+          |___/               |___/
+""".strip("\n")
+
 _PROVIDER_TEXT = {
     "local": (
         "local — software KEK. A 32-byte file, mode 0600. "
@@ -113,6 +122,11 @@ def _yes(read_line, prompt: str) -> bool:
 def run(*, read_line, read_secret, echo, login=None) -> dict:
     """Prompt for KMS, then Auth0. ``login`` defaults to ``auth.password_login``."""
     _marks(echo, 3)
+    if not env_path().exists():
+        echo("")
+        for line in _BANNER.splitlines():
+            echo(line)
+        echo("")
     echo("KMS provider (KEYFORGE_KMS_PROVIDER). Setup saves the answer; a bare assignment in a file is not enough.")
     echo("")
     for i, name in enumerate(_PROVIDERS):
