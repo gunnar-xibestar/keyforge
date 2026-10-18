@@ -97,6 +97,11 @@ def _write_env(values: dict[str, str]) -> Path:
     return path
 
 
+def _blanks(echo, n: int) -> None:
+    for _ in range(n):
+        echo("")
+
+
 def _ask(read_line, prompt: str) -> str:
     return read_line(prompt).strip()
 
@@ -107,9 +112,7 @@ def _yes(read_line, prompt: str) -> bool:
 
 def run(*, read_line, read_secret, echo, login=None) -> dict:
     """Prompt for KMS, then Auth0. ``login`` defaults to ``auth.password_login``."""
-    echo("")
-    echo("")
-    echo("")
+    _blanks(echo, 3)
     echo("KMS provider (KEYFORGE_KMS_PROVIDER). Setup saves the answer; a bare assignment in a file is not enough.")
     echo("")
     for i, name in enumerate(_PROVIDERS):
@@ -167,6 +170,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         echo("")
         echo(_status_text(info))
         echo(f"saved: {path}")
+        _blanks(echo, 5)
         return {"kms_provider": choice, "auth": info, "env_file": str(path)}
 
     echo("")
@@ -190,7 +194,6 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         os.environ[key] = value
 
     echo("")
-    echo("")
     echo("Login. Username first, then password.")
     echo("Username is the database user (User Management → Users), usually the email. It is not the Client ID.")
     echo("Password is that user's password. It is not the Client Secret and it is not written to disk.")
@@ -204,6 +207,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     echo(f"logged in as {principal.sub}")
     echo(_status_text(info))
     echo(f"saved: {path}")
+    _blanks(echo, 5)
     return {"kms_provider": choice, "auth": info, "env_file": str(path), "sub": principal.sub}
 
 
