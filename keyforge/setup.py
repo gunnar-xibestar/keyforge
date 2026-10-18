@@ -154,6 +154,19 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         if key_file:
             saved["KEYFORGE_KMS_KEY_FILE"] = key_file
     elif choice == "pkcs11":
+        echo("Prepare SoftHSM before the module path. Run this in another terminal:")
+        echo("")
+        echo("  mkdir -p \"$HOME/.keyforge/softhsm/tokens\"")
+        echo("  printf 'directories.tokendir = %s\\nobjectstore.backend = file\\nlog.level = ERROR\\n' \\")
+        echo("    \"$HOME/.keyforge/softhsm/tokens\" > \"$HOME/.keyforge/softhsm/softhsm2.conf\"")
+        echo("  SOFTHSM2_CONF=\"$HOME/.keyforge/softhsm/softhsm2.conf\" \\")
+        echo("    softhsm2-util --init-token --free --label keyforge --pin \"$PIN\" --so-pin \"$SO_PIN\"")
+        echo("")
+        echo("The module is often /usr/lib/softhsm/libsofthsm2.so (dpkg -L softhsm2 | grep '\\.so$').")
+        echo("A hardware token skips softhsm2-util and uses that vendor's .so instead.")
+        echo("")
+        _ask(read_line, "Press Enter when the token exists: ")
+        echo("")
         module = _ask(read_line, "KEYFORGE_PKCS11_MODULE [/usr/lib/softhsm/libsofthsm2.so]: ") or "/usr/lib/softhsm/libsofthsm2.so"
         token = _ask(read_line, "KEYFORGE_PKCS11_TOKEN [keyforge]: ") or "keyforge"
         echo("PIN is the token user PIN from softhsm2-util --init-token --pin, not the SO PIN.")

@@ -76,6 +76,7 @@ class SetupTests(unittest.TestCase):
     def test_auth0_asks_username_then_password_and_prints_status(self):
         answers = iter([
             "pkcs11",
+            "",
             "/usr/lib/softhsm/libsofthsm2.so",
             "keyforge",
             "keyforge-kek",
@@ -124,6 +125,8 @@ class SetupTests(unittest.TestCase):
         self.assertIn("logged in as auth0|ada", text)
         self.assertNotIn("auth status", text)
         self.assertNotIn("scopes:", text)
+        self.assertIn("Prepare SoftHSM before the module path", text)
+        self.assertLess(prompts.index("Press Enter when the token exists: "), prompts.index("KEYFORGE_PKCS11_MODULE [/usr/lib/softhsm/libsofthsm2.so]: "))
         self.assertIn("Applications → APIs", text)
         body = Path(self.env_file).read_text()
         self.assertIn("KEYFORGE_KMS_PROVIDER=pkcs11", body)

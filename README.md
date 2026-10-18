@@ -59,9 +59,7 @@ Setup records the answer. Auth0 `auth login` / `auth status` do **not** use the 
 
 **If you enter `local`.** Setup asks for `KEYFORGE_KMS_KEY_FILE`. Leave it blank to keep the key at `<store-dir>/kms-master.key`. The default store is `~/.keyforge/store.json`, so the default key is `~/.keyforge/kms-master.key`. The file is a software KEK. Put `KEYFORGE_KMS_KEY_FILE` outside the store directory if the ciphertext and the wrapping key should sit on different permission boundaries. Anyone who can read both can reveal secrets. Find the store with `echo "${KEYFORGE_STORE:-$HOME/.keyforge/store.json}"`.
 
-**If you enter `pkcs11`.** Install the binding and a module first (see [Package](#1-package)). Setup then asks, in order, for `KEYFORGE_PKCS11_MODULE` (default `/usr/lib/softhsm/libsofthsm2.so`; `dpkg -L softhsm2 | grep '\.so$'`), `KEYFORGE_PKCS11_TOKEN` (default `keyforge`; `softhsm2-util --show-slots`), the user PIN (`KEYFORGE_PKCS11_PIN`, from `--init-token --pin`, not the SO PIN), `KEYFORGE_PKCS11_KEY_LABEL` (default `keyforge-kek`), whether to generate the AES key when the label is missing (`y` less-secure, `N` strict), and `SOFTHSM2_CONF` (default `~/.keyforge/softhsm/softhsm2.conf`). The PIN is stored in `keyforge.env` at mode 0600. It is not written to the store or to logs.
-
-Prepare SoftHSM before that prompt:
+**If you enter `pkcs11`.** Install the binding and a module first (see [Package](#1-package)). Setup prints the SoftHSM token commands and waits until you press Enter, then asks, in order, for `KEYFORGE_PKCS11_MODULE` (default `/usr/lib/softhsm/libsofthsm2.so`; `dpkg -L softhsm2 | grep '\.so$'`), `KEYFORGE_PKCS11_TOKEN` (default `keyforge`; `softhsm2-util --show-slots`), the user PIN (`KEYFORGE_PKCS11_PIN`, from `--init-token --pin`, not the SO PIN), `KEYFORGE_PKCS11_KEY_LABEL` (default `keyforge-kek`), whether to generate the AES key when the label is missing (`y` less-secure, `N` strict), and `SOFTHSM2_CONF` (default `~/.keyforge/softhsm/softhsm2.conf`). The PIN is stored in `keyforge.env` at mode 0600. It is not written to the store or to logs. Those commands are:
 
 ```
 mkdir -p "$HOME/.keyforge/softhsm/tokens"
