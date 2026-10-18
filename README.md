@@ -174,6 +174,7 @@ The on-disk hash record is unchanged: `algo`, `iterations`, `salt`, `hash`. The 
 | `GET /health` | open |
 | `GET /whoami` | any valid `kf_...` secret |
 | `GET /packets` | secret must grant scope `read:packets` |
+| `GET /admin` | secret must grant scope `write:packets` |
 
 Each request calls `verify` (hash + status + optional scope/IP). Missing/invalid Bearer → 401; failed verify → 403. Auth0, when enabled, only gates who may *start* the server (`keys:verify`); API clients still present KeyForge secrets, never Auth0 tokens.
 
@@ -251,11 +252,23 @@ curl -s -H "Authorization: Bearer kf_..." http://127.0.0.1:8787/packets
 
 Same shape as `/whoami`, plus `"required_scope": "read:packets"`. `verify` is called with that scope. Your key has it → **200**. A key without it → **403** (`missing scope …`). A wrong or unknown secret → **403** (verify failed).
 
-**Flow in one line:** create secret → serve → open `/health` → deny bare `/whoami` → accept Bearer on `/whoami` → require `read:packets` on `/packets`.
+**7. Admin (valid key, wrong scope)**
+
+```
+curl -s -w '\nHTTP %{http_code}\n' -H "Authorization: Bearer kf_..." http://127.0.0.1:8787/admin
+```
+
+```json
+{ "error": "missing scope 'write:packets'" }
+```
+
+HTTP **403**. The secret is a valid key and `/whoami` and `/packets` accept it. `/admin` requires `write:packets`, which this key does not have.
+
+**Flow in one line:** create secret → serve → open `/health` → deny bare `/whoami` → accept Bearer on `/whoami` → require `read:packets` on `/packets` → reject that same key on `/admin`.
 
 | status | when |
 |---|---|
-| **200** | `/health` ok; `/whoami` or `/packets` with a valid secret (and scope when required) |
+| **200** | `/health` ok; `/whoami`, `/packets`, or `/admin` with a valid secret (and scope when required) |
 | **401** | missing or invalid `Authorization: Bearer …` |
 | **403** | Bearer present but `verify` failed (bad secret, revoked/suspended, missing scope, IP deny) |
 | **404** | unknown path |

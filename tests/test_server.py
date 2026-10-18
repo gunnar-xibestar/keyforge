@@ -84,6 +84,12 @@ class DispatchTests(_ServerFixture):
         self.assertEqual(status, 200, body)
         self.assertEqual(body["required_scope"], "read:packets")
 
+    def test_admin_rejects_key_without_write_packets(self):
+        status, body = server.dispatch(
+            self.path, "GET", "/admin", f"Bearer {self.secret}", "127.0.0.1")
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"], "missing scope 'write:packets'")
+
     def test_bad_secret(self):
         status, body = server.dispatch(
             self.path, "GET", "/whoami", "Bearer kf_test_nope1234567890123456789012", "127.0.0.1")
