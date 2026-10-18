@@ -175,6 +175,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
 
     echo("")
     echo("Auth0 operator login is off until AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_AUDIENCE are all set.")
+    echo("")
     if not _yes(read_line, "Set up Auth0 now? [Y/n] ", default=True):
         echo("")
         echo("warning: Auth0 is necessary for the demo. Skipping it leaves operator login disabled.")
@@ -191,6 +192,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         _marks(echo, 5)
         return {"kms_provider": choice, "auth": info, "env_file": str(path)}
 
+    echo("")
     echo("")
     echo("Auth0 dashboard (https://manage.auth0.com):")
     echo("")
