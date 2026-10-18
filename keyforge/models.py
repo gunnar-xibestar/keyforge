@@ -78,6 +78,15 @@ class ApiKey:
     def public(self) -> dict:
         d = self.to_dict()
         d.pop("hash", None)
-        d.pop("secret_envelope", None)
+        env = d.pop("secret_envelope", None)
         d["effective_status"] = self.effective_status()
+        # Wrapping provider only — never the rest of the envelope or hash.
+        provider = None
+        if isinstance(env, dict):
+            wrapped = env.get("wrapped_dek")
+            if isinstance(wrapped, dict):
+                p = wrapped.get("provider")
+                if isinstance(p, str) and p:
+                    provider = p
+        d["kms"] = provider
         return d

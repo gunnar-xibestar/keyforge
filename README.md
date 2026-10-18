@@ -181,7 +181,7 @@ Access-token rejection rules: [Token diet](#token-diet). Every variable: [Enviro
 | command | purpose |
 |---|---|
 | `create --name --owner [--team] [--env live/test] [--scope S]... [--expires-in 30d / --expires-at ISO] [--rate-limit N] [--ip-allow CIDR]... [--label k=v]... [--description] [--dry-run]` | new key; prints the secret once and stores an envelope |
-| `list [--owner --team --env --status --scope GLOB --label k=v] [--format table/json/csv]` | list keys |
+| `list [--owner --team --env --status --scope GLOB --label k=v] [--format table/json/csv]` | list keys (`kms` wrapping provider; table/csv show `NO EXP` when no expiry) |
 | `show KEY` | metadata only (no hash, no envelope, no secret) |
 | `reveal KEY` | decrypt the envelope and print the secret. Requires scope `reveal:secret` when Auth0 is enabled |
 | `verify SECRET/- [--scope S] [--ip IP]` | check a secret against the hash (exit 4 if invalid). Does not decrypt |
@@ -211,7 +211,7 @@ Scopes look like `resource:action`. Grants may be globs (`read:*`). Statuses: ac
 
 `verify` never decrypts. It still walks candidates by prefix and compares the PBKDF2 hash in constant time.
 
-The on-disk hash record is unchanged: `algo`, `iterations`, `salt`, `hash`. The envelope is a sibling field, `secret_envelope`, and `show` / `list` / `public()` omit both the hash and the envelope.
+The on-disk hash record is unchanged: `algo`, `iterations`, `salt`, `hash`. The envelope is a sibling field, `secret_envelope`, and `show` / `list` / `public()` omit both the hash and the envelope. `list` / `public()` do surface `kms` as the wrapping provider (`local` / `pkcs11` / `memory`) without the rest of the envelope; hash-only legacy keys show blank/`-`.
 
 ## Exit codes
 
