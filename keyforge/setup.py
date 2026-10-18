@@ -239,25 +239,33 @@ def _audit_chain(echo, saved: dict) -> None:
     """Verify the audit hash chain, start it when metadata is missing, and create an HMAC key file."""
     path = resolve_path(None)
     echo("")
-    echo("audit chain")
+    echo("Audit chain")
+    echo("-----------")
+    echo("")
     echo(f"store: {path}")
+    echo("")
     key_created = False
+    key_path_was_unset = False
     hmac_was_enabled = False
     with Store(path) as st:
         if st.data.get("audit_meta") is None:
             echo("audit metadata is absent.")
+            echo("")
             try:
                 ev = audit.adopt_legacy(st)
                 st.save()
             except KeyForgeError as e:
                 echo(f"audit chain was not created: {e}")
                 echo("Events already in this log cannot be checked for tampering.")
+                echo("")
             else:
                 n = ev["details"]["legacy"]
                 echo(f"audit chain started; {n} legacy event(s) recorded as unprotected.")
                 echo("A legacy event has no prev_hash or hash. Changing it or deleting it is not detected.")
+                echo("")
         key_file = os.environ.get("KEYFORGE_AUDIT_HMAC_KEY_FILE", "").strip()
         if not key_file:
+            key_path_was_unset = True
             key_file = str(path.parent / "audit-hmac.key")
             saved["KEYFORGE_AUDIT_HMAC_KEY_FILE"] = key_file
             os.environ["KEYFORGE_AUDIT_HMAC_KEY_FILE"] = key_file
@@ -271,12 +279,23 @@ def _audit_chain(echo, saved: dict) -> None:
                 os.close(fd)
             key_created = True
             echo(f"audit HMAC key created: {key_file}")
+            echo("")
+            if key_path_was_unset:
+                echo("No KEYFORGE_AUDIT_HMAC_KEY_FILE was set, and no key file existed at the default path.")
+            else:
+                echo("KEYFORGE_AUDIT_HMAC_KEY_FILE pointed at a path with no key file yet.")
+            echo("Setup created one (32 random bytes, mode 0600).")
+            echo("Later setups reuse this file when it still exists; they do not mint a new secret each run.")
+            echo("")
         else:
             echo(f"audit HMAC key found: {key_file}")
+            echo("Reusing the existing secret. Setup does not create a new HMAC key when this file is present.")
+            echo("")
         try:
             key = audit.hmac_key()
         except KeyForgeError as e:
             echo(f"audit HMAC key is unusable: {e}")
+            echo("")
             key = None
         meta = st.data.get("audit_meta") or {}
         hmac_was_enabled = bool(meta.get("mac"))
@@ -285,6 +304,7 @@ def _audit_chain(echo, saved: dict) -> None:
             st.save()
             echo("A new audit event was written so the metadata MAC starts at this event.")
             echo("Events before it have no MAC. Rebuilding their hashes is not detected as tampering.")
+            echo("")
         r = audit.verify_chain(st.audit_log, st.data.get("audit_meta"), key)
     if r["ok"]:
         line = f"audit chain OK: {r['checked']} chained event(s), count {r['count']}, head {r['head']}"
@@ -293,34 +313,49 @@ def _audit_chain(echo, saved: dict) -> None:
         echo(line)
         if r["legacy"]:
             echo(f"{r['legacy']} legacy event(s) have no hash. Tampering with those events is not detected.")
+        echo("")
     else:
         echo(f"AUDIT CHAIN BROKEN: {r['error']}")
+        echo("")
     found_working = bool(key and r["ok"] and r["mac_verified"] and not key_created and hmac_was_enabled)
+    next_to_store = (
+        os.path.dirname(os.path.abspath(key_file)) == os.path.abspath(path.parent)
+    )
     if found_working:
         echo("HMAC: on, verified, working")
+        echo("")
         echo(f"  secret: {key_file}")
         echo(f"  chain: {r['checked']} chained event(s), count {r['count']}, head {r['head']}")
         if r["legacy"]:
             echo(f"  legacy: {r['legacy']} event(s) have no hash or MAC")
+        echo("")
         echo("  audit --verify will check both the hash chain and the HMAC tags.")
+        echo("")
         echo("The MAC detects a rewritten store only when the writer cannot read the HMAC key file.")
-        if os.path.dirname(os.path.abspath(key_file)) == os.path.abspath(path.parent):
+        if next_to_store:
             echo("This file is next to the store. Anyone who can read that directory can forge a chain that still verifies.")
     elif key and r["ok"] and r["mac_verified"]:
         echo("HMAC: on and verified for new events")
+        echo("")
         echo(f"  secret: {key_file}")
         echo(f"  chain: {r['checked']} chained event(s), count {r['count']}, head {r['head']}")
+        echo("")
         if key_created:
-            echo("warning: a new HMAC key was created for this setup.")
+            echo("warning: a new HMAC key was created because none was found at that path.")
+            echo("Keep this file. The next setup reuses it instead of creating another.")
+            echo("")
             echo("Without that key, audit --verify only checks the unkeyed hash chain.")
             echo("Anyone who can write the store can recompute prev_hash and hash, and audit --verify still passes.")
+            echo("")
         echo("The MAC detects a rewritten store only when the writer cannot read the HMAC key file.")
-        if os.path.dirname(os.path.abspath(key_file)) == os.path.abspath(path.parent):
+        if next_to_store:
             echo("This file is next to the store. Anyone who can read that directory can forge a chain that still verifies.")
     else:
         echo("warning: HMAC is not verifying the audit chain.")
+        echo("")
         if not key:
             echo("No usable HMAC secret was found.")
+            echo("")
         echo("Without HMAC, audit --verify only checks the unkeyed hash chain.")
         echo("Anyone who can write the store can recompute prev_hash and hash, and audit --verify still passes.")
         echo("You lose keyed tamper evidence until KEYFORGE_AUDIT_HMAC_KEY_FILE points at a usable secret.")
