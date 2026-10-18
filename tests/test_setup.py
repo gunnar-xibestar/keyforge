@@ -212,6 +212,19 @@ class SetupTests(unittest.TestCase):
         self.assertIn("Create a new token:", text)
         self.assertIn("removed 1 newer token", text)
 
+    def test_blank_pin_prints_softhsm_setup(self):
+        from keyforge.errors import KeyForgeError
+        answers = iter(["pkcs11", "", "/tmp/no-such-libsofthsm2.so", "keyforge"])
+
+        def read_line(prompt):
+            return next(answers)
+
+        with self.assertRaises(KeyForgeError) as cm:
+            setup_mod.run(read_line=read_line, read_secret=lambda _p: "", echo=self._echo)
+        self.assertIn("--init-token --pin", str(cm.exception))
+        self.assertIn("not the SO PIN", str(cm.exception))
+        self.assertGreaterEqual("\n".join(self.lines).count("SoftHSM setup:"), 2)
+
     def test_bare_keyforge_needs_a_command(self):
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
             cli.main([])

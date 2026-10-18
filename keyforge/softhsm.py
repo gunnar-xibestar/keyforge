@@ -13,6 +13,26 @@ from pathlib import Path
 from .errors import KeyForgeError
 
 
+def setup_instructions() -> str:
+    """Commands that create a SoftHSM token and its user PIN.
+
+    The SO PIN is only for ``--so-pin``. KeyForge stores the user PIN.
+    """
+    return "\n".join((
+        "SoftHSM setup:",
+        "  mkdir -p \"$HOME/.keyforge/softhsm/tokens\"",
+        "  printf 'directories.tokendir = %s\\nobjectstore.backend = file\\nlog.level = ERROR\\n' \\",
+        "    \"$HOME/.keyforge/softhsm/tokens\" > \"$HOME/.keyforge/softhsm/softhsm2.conf\"",
+        "  SOFTHSM2_CONF=\"$HOME/.keyforge/softhsm/softhsm2.conf\" \\",
+        "    softhsm2-util --init-token --free --label keyforge --pin \"$PIN\" --so-pin \"$SO_PIN\"",
+        "",
+        "PIN is the user PIN from --init-token --pin. Enter that as KEYFORGE_PKCS11_PIN.",
+        "The SO PIN is only for --so-pin. It is not saved.",
+        "The module is often /usr/lib/softhsm/libsofthsm2.so (dpkg -L softhsm2 | grep '\\.so$').",
+        "A hardware token skips softhsm2-util and uses that vendor's .so instead.",
+    ))
+
+
 def tokendir(conf_path: str | None) -> Path | None:
     if not conf_path:
         return None

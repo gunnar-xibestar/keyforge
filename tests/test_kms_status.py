@@ -56,6 +56,8 @@ class KmsStatusTests(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         self.assertIn('"provider": "pkcs11"', out)
         self.assertIn("KEYFORGE_PKCS11_MODULE", out)
+        self.assertIn("softhsm2-util --init-token", out)
+        self.assertIn("SO PIN is only for --so-pin", out)
 
     def test_memory_ready(self):
         os.environ["KEYFORGE_KMS_PROVIDER"] = "memory"

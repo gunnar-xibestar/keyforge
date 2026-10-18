@@ -11,7 +11,7 @@ from pathlib import Path
 from . import auth
 from .errors import AuthError, KeyForgeError
 from .kms import format_status, status as kms_status
-from .softhsm import drop_newer_tokens, matching_tokens
+from .softhsm import drop_newer_tokens, matching_tokens, setup_instructions
 
 _PROVIDERS = ("local", "pkcs11", "memory")
 
@@ -185,14 +185,8 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
             saved["KEYFORGE_KMS_KEY_FILE"] = key_file
     elif choice == "pkcs11":
         echo("Create a new token:")
-        echo("  mkdir -p \"$HOME/.keyforge/softhsm/tokens\"")
-        echo("  printf 'directories.tokendir = %s\\nobjectstore.backend = file\\nlog.level = ERROR\\n' \\")
-        echo("    \"$HOME/.keyforge/softhsm/tokens\" > \"$HOME/.keyforge/softhsm/softhsm2.conf\"")
-        echo("  SOFTHSM2_CONF=\"$HOME/.keyforge/softhsm/softhsm2.conf\" \\")
-        echo("    softhsm2-util --init-token --free --label keyforge --pin \"$PIN\" --so-pin \"$SO_PIN\"")
-        echo("")
-        echo("The module is often /usr/lib/softhsm/libsofthsm2.so (dpkg -L softhsm2 | grep '\\.so$').")
-        echo("A hardware token skips softhsm2-util and uses that vendor's .so instead.")
+        for line in setup_instructions().splitlines():
+            echo(line)
         echo("")
         default_conf = os.environ.get("SOFTHSM2_CONF") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
         existing = matching_tokens("keyforge", default_conf)
@@ -213,7 +207,12 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         echo("PIN is the token user PIN from softhsm2-util --init-token --pin, not the SO PIN.")
         pin = read_secret("KEYFORGE_PKCS11_PIN: ")
         if not pin:
-            raise KeyForgeError("KEYFORGE_PKCS11_PIN is required for pkcs11")
+            for line in setup_instructions().splitlines():
+                echo(line)
+            raise KeyForgeError(
+                "KEYFORGE_PKCS11_PIN is required. It is the user PIN from "
+                "softhsm2-util --init-token --pin, not the SO PIN."
+            )
         label = _ask(read_line, "KEYFORGE_PKCS11_KEY_LABEL [keyforge-kek]: ") or "keyforge-kek"
         if reuse:
             echo("warning: reuse deletes newer SoftHSM tokens with this label and keeps the oldest. Secrets wrapped by a deleted token cannot be opened.")

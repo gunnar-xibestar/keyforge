@@ -219,7 +219,12 @@ class Pkcs11Token:
         if not module_path or not token_label or not key_label:
             raise KeyForgeError("PKCS#11 module, token label, and key label are required")
         if pin is None or pin == "":
-            raise KeyForgeError("KEYFORGE_PKCS11_PIN is required for the PKCS#11 provider")
+            from .softhsm import setup_instructions
+            raise KeyForgeError(
+                "KEYFORGE_PKCS11_PIN is required. It is the user PIN from "
+                "softhsm2-util --init-token --pin, not the SO PIN.\n"
+                + setup_instructions()
+            )
         self.module_path = module_path
         self.token_label = token_label
         self.key_label = key_label
@@ -366,7 +371,11 @@ def pkcs11_from_env() -> Pkcs11Kms:
     missing = [n for n, v in (("KEYFORGE_PKCS11_MODULE", module), ("KEYFORGE_PKCS11_TOKEN", token),
                               ("KEYFORGE_PKCS11_PIN", pin), ("KEYFORGE_PKCS11_KEY_LABEL", label)) if not v]
     if missing:
-        raise KeyForgeError("PKCS#11 provider is missing " + ", ".join(missing))
+        message = "PKCS#11 provider is missing " + ", ".join(missing)
+        if "KEYFORGE_PKCS11_PIN" in missing:
+            from .softhsm import setup_instructions
+            message += "\n" + setup_instructions()
+        raise KeyForgeError(message)
     return Pkcs11Kms(Pkcs11Token(module, token, pin, label), label)
 
 
@@ -405,6 +414,8 @@ def format_status(info: dict) -> list[str]:
             lines.append(f"SOFTHSM2_CONF: {info['softhsm2_conf']}")
     if info.get("missing"):
         lines.append("missing: " + ", ".join(info["missing"]))
+    if info.get("softhsm_setup"):
+        lines.extend(str(info["softhsm_setup"]).splitlines())
     if info.get("error"):
         lines.append(f"error: {info['error']}")
     for warning in info.get("warnings") or []:
@@ -458,6 +469,8 @@ def status(store_path: str | None = None) -> dict:
             missing.append("KEYFORGE_PKCS11_TOKEN")
         if not pin_set:
             missing.append("KEYFORGE_PKCS11_PIN")
+            from .softhsm import setup_instructions
+            info["softhsm_setup"] = setup_instructions()
         if not label:
             missing.append("KEYFORGE_PKCS11_KEY_LABEL")
         if missing:
