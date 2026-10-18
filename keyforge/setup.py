@@ -1,11 +1,11 @@
 """Interactive boot: KMS provider, optional Auth0, then username and password.
 
-Writes ``~/.keyforge/keyforge.env`` (mode 0600). Later commands load it
-when a variable is unset. A different value already in the environment is
-kept, and the conflict is printed. The Auth0 password is never written there.
+Writes ``~/.keyforge/keyforge.env`` (mode 0600). Later commands apply that
+file over any same-named variables inherited from the shell. The Auth0
+password is never written there.
 """
 from __future__ import annotations
-import os, shlex, stat, sys
+import os, shlex, stat
 from pathlib import Path
 
 from . import auth
@@ -60,21 +60,9 @@ def env_path() -> Path:
     return Path(os.path.expanduser(os.environ.get("KEYFORGE_ENV_FILE") or "~/.keyforge/keyforge.env"))
 
 
-_HIDDEN_VALUES = frozenset({
-    "KEYFORGE_PKCS11_PIN", "AUTH0_CLIENT_SECRET", "KEYFORGE_KMS_MEMORY_KEY",
-})
-# Filled by load_env_file. Each item is key, environment value, file value, path.
-conflicts: list[dict] = []
-
-
 def load_env_file(path: Path | None = None) -> None:
-    """Apply KEY=VALUE lines when the variable is not already set. Never overrides.
-
-    A variable already set to a different value is left alone and reported on
-    stderr, so a shell export cannot silently hide ``keyforge.env``.
-    """
+    """Apply every KEY=VALUE in the file, replacing a value inherited from the shell."""
     path = path or env_path()
-    conflicts.clear()
     try:
         text = path.read_text()
     except FileNotFoundError:
@@ -101,33 +89,14 @@ def load_env_file(path: Path | None = None) -> None:
         key, value = token.split("=", 1)
         if not key:
             continue
-        current = os.environ.get(key)
-        if current is None:
-            os.environ[key] = value
-            continue
-        if current == value:
-            continue
-        shown = "a different value" if key in _HIDDEN_VALUES else value
-        conflicts.append({"key": key, "environment": current, "file": shown, "path": str(path)})
-        print(
-            "\n".join([
-                "failure: shell value hid keyforge.env",
-                f"  where: loading {path}",
-                f"  variable: {key}",
-                f"  environment: {current}",
-                f"  keyforge.env: {shown}",
-                "  used: environment",
-                f"  fix: unset {key}",
-            ]),
-            file=sys.stderr,
-        )
+        os.environ[key] = value
 
 
 def _write_env(values: dict[str, str]) -> Path:
     path = env_path()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     lines = [
-        "# KeyForge boot config. Loaded when a variable is unset.",
+        "# KeyForge boot config. Applied over inherited environment variables.",
         "# The Auth0 password is not stored here.",
     ]
     for key, value in values.items():

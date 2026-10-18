@@ -358,18 +358,10 @@ def cmd_setup(a, st=None):
 def cmd_kms(a, st=None):
     """Report the active KMS. Does not hold the store lock."""
     from . import kms as kms_mod
-    from . import setup as setup_mod
     info = kms_mod.status(store_path=str(resolve_path(getattr(a, "store", None))))
-    blocked = [c for c in setup_mod.conflicts if c["key"].startswith("KEYFORGE_") or c["key"] == "SOFTHSM2_CONF"]
-    failed = bool(blocked) or not info.get("ready")
-    lines = ["result: failure" if failed else "result: success"]
-    for c in blocked:
-        lines.append(f"failure: {c['key']} was not applied")
-        lines.append(f"  where: {c['path']}")
-        lines.append(f"  environment: {c['environment']}")
-        lines.append(f"  keyforge.env: {c['file']}")
-        lines.append(f"  fix: unset {c['key']}")
-    lines += [f"provider: {info.get('provider')}", f"ready: {info.get('ready')}"]
+    failed = not info.get("ready")
+    lines = ["result: failure" if failed else "result: success",
+             f"provider: {info.get('provider')}", f"ready: {info.get('ready')}"]
     if info.get("key_file") is not None:
         lines.append(f"key_file: {info['key_file']} (exists={info.get('key_file_exists')})")
         if info.get("key_file_mode") is not None:
@@ -395,7 +387,7 @@ def cmd_kms(a, st=None):
     info = dict(info)
     info["result"] = "failure" if failed else "success"
     _out(a, info, "\n".join(lines))
-    return 1 if blocked else EXIT_OK
+    return EXIT_OK
 
 
 def cmd_serve(a, st=None):
