@@ -107,18 +107,26 @@ def _yes(read_line, prompt: str) -> bool:
 
 def run(*, read_line, read_secret, echo, login=None) -> dict:
     """Prompt for KMS, then Auth0. ``login`` defaults to ``auth.password_login``."""
+    echo("")
+    echo("")
+    echo("")
     echo("KeyForge")
     echo("--------")
+    echo("")
     echo("KMS provider (KEYFORGE_KMS_PROVIDER). Export it; a bare assignment in a file is not enough.")
+    echo("")
     for name in _PROVIDERS:
         echo(f"  {name}")
         echo(f"    {_PROVIDER_TEXT[name]}")
+        echo("")
     choice = _ask(read_line, "KEYFORGE_KMS_PROVIDER [local]: ").lower() or "local"
     if choice not in _PROVIDERS:
         raise KeyForgeError(f"unknown KEYFORGE_KMS_PROVIDER {choice!r}; choose from {', '.join(_PROVIDERS)}")
     saved: dict[str, str] = {"KEYFORGE_KMS_PROVIDER": choice}
+    echo("")
     echo(f"selected: {choice}")
     echo(_PROVIDER_TEXT[choice])
+    echo("")
 
     if choice == "local":
         echo("Leave blank to keep the key at <store-dir>/kms-master.key.")
@@ -149,6 +157,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     echo("")
     echo("Auth0 operator login is optional. It is off until AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_AUDIENCE are all set.")
     if not _yes(read_line, "Set up Auth0 now? [y/N] "):
+        echo("")
         echo("warning: Auth0 is not set up. Every command trusts the OS user.")
         echo("warning: there is no operator scope gate. Anyone who can run keyforge as this user can create, reveal, and delete keys.")
         echo("warning: turn it on later with `keyforge setup` after creating a Native app and an API in the Auth0 dashboard.")
