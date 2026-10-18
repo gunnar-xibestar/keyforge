@@ -240,9 +240,21 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
 
     echo("")
     echo("progress: Auth0")
-    echo("Auth0 operator login is off until AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_AUDIENCE are all set.")
-    echo("")
-    if not _yes(read_line, "Set up Auth0 now? [Y/n] ", default=True):
+    existing_auth = {name: os.environ.get(name, "").strip() for name in (
+        "AUTH0_DOMAIN", "AUTH0_CLIENT_ID", "AUTH0_AUDIENCE")}
+    if all(existing_auth.values()):
+        echo("Auth0 is already configured. These saved values are kept.")
+        echo("Unset AUTH0_DOMAIN to enter different values.")
+        echo("")
+        for name, value in existing_auth.items():
+            echo(f"  {name}: {value}")
+        echo("")
+        echo("result: success")
+        echo("  AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_AUDIENCE are set.")
+        saved.update(existing_auth)
+        for key, value in saved.items():
+            os.environ[key] = value
+    elif not _yes(read_line, "Set up Auth0 now? [Y/n] ", default=True):
         echo("")
         echo("warning: Auth0 is necessary for the demo. Skipping it leaves operator login disabled.")
         echo("warning: Auth0 is not set up. Every command trusts the OS user.")
@@ -258,37 +270,37 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         echo(f"saved: {path}")
         _marks(echo, 5)
         return {"kms_provider": choice, "auth": info, "env_file": str(path)}
-
-    echo("")
-    echo("")
-    echo("Auth0 dashboard (https://manage.auth0.com):")
-    echo("")
-    for name, hint in (
-        ("AUTH0_DOMAIN", "Settings → Domain. Hostname only, no https://"),
-        ("AUTH0_CLIENT_ID", "Applications → your Native app → Settings → Client ID"),
-        ("AUTH0_AUDIENCE", "Applications → APIs → your API → Settings → Identifier"),
-    ):
-        echo(f"  {name}")
-        echo(f"    {hint}")
+    else:
         echo("")
-    echo("Enable the Password grant (and Device Code if you still use `auth login`) on that Native app.")
-    echo("")
-    echo("API Permissions: keys:read keys:write keys:verify reveal:secret")
-    echo("")
-    domain = _ask(read_line, "AUTH0_DOMAIN: ")
-    echo("")
-    client_id = _ask(read_line, "AUTH0_CLIENT_ID: ")
-    echo("")
-    audience = _ask(read_line, "AUTH0_AUDIENCE [https://keyforge.local/api]: ") or "https://keyforge.local/api"
-    if not domain or not client_id or not audience:
-        raise AuthError("Auth0 requires AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_AUDIENCE")
-    saved.update({
-        "AUTH0_DOMAIN": domain,
-        "AUTH0_CLIENT_ID": client_id,
-        "AUTH0_AUDIENCE": audience,
-    })
-    for key, value in saved.items():
-        os.environ[key] = value
+        echo("")
+        echo("Auth0 dashboard (https://manage.auth0.com):")
+        echo("")
+        for name, hint in (
+            ("AUTH0_DOMAIN", "Settings → Domain. Hostname only, no https://"),
+            ("AUTH0_CLIENT_ID", "Applications → your Native app → Settings → Client ID"),
+            ("AUTH0_AUDIENCE", "Applications → APIs → your API → Settings → Identifier"),
+        ):
+            echo(f"  {name}")
+            echo(f"    {hint}")
+            echo("")
+        echo("Enable the Password grant (and Device Code if you still use `auth login`) on that Native app.")
+        echo("")
+        echo("API Permissions: keys:read keys:write keys:verify reveal:secret")
+        echo("")
+        domain = _ask(read_line, "AUTH0_DOMAIN: ")
+        echo("")
+        client_id = _ask(read_line, "AUTH0_CLIENT_ID: ")
+        echo("")
+        audience = _ask(read_line, "AUTH0_AUDIENCE [https://keyforge.local/api]: ") or "https://keyforge.local/api"
+        if not domain or not client_id or not audience:
+            raise AuthError("Auth0 requires AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_AUDIENCE")
+        saved.update({
+            "AUTH0_DOMAIN": domain,
+            "AUTH0_CLIENT_ID": client_id,
+            "AUTH0_AUDIENCE": audience,
+        })
+        for key, value in saved.items():
+            os.environ[key] = value
 
     echo("")
     echo("")

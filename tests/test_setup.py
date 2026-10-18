@@ -76,6 +76,33 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(os.stat(self.env_file).st_mode), 0o600)
         self.assertEqual(os.environ["KEYFORGE_KMS_PROVIDER"], "local")
 
+    def test_saved_auth0_skips_the_setup_question(self):
+        os.environ["AUTH0_DOMAIN"] = "tenant.example.test"
+        os.environ["AUTH0_CLIENT_ID"] = "client-id"
+        os.environ["AUTH0_AUDIENCE"] = "https://keyforge.local/api"
+        answers = iter(["local", "", "ada@example.test"])
+        prompts = []
+
+        def read_line(prompt):
+            prompts.append(prompt)
+            return next(answers)
+
+        def login(username, password):
+            self.assertEqual(username, "ada@example.test")
+            self.assertEqual(password, "user-secret")
+            return Principal(sub="auth0|ada", scopes=frozenset({"keys:read"}), exp=1)
+
+        result = setup_mod.run(
+            read_line=read_line, read_secret=lambda _p: "user-secret", echo=self._echo, login=login)
+        self.assertNotIn("Set up Auth0 now? [Y/n] ", prompts)
+        text = "\n".join(self.lines)
+        self.assertIn("Auth0 is already configured", text)
+        self.assertIn("AUTH0_DOMAIN: tenant.example.test", text)
+        self.assertIn("logged in as auth0|ada", text)
+        body = Path(self.env_file).read_text()
+        self.assertIn("AUTH0_CLIENT_ID=client-id", body)
+        self.assertEqual(result["sub"], "auth0|ada")
+
     def test_auth0_asks_username_then_password_and_prints_status(self):
         answers = iter([
             "pkcs11",

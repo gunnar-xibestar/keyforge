@@ -71,7 +71,7 @@ Setup records the answer and prints `keyforge kms status` before Auth0. `result:
 Set up Auth0 now? [Y/n]
 ```
 
-Pressing Enter accepts yes. Auth0 is **off** until all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE` are set. Setting only some of them is an error.
+Pressing Enter accepts yes. Auth0 is **off** until all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE` are set. Setting only some of them is an error. When all three are already in the environment (including from `keyforge.env`), setup keeps them, prints them, and does not ask this question. Unset `AUTH0_DOMAIN` to enter different values.
 
 Answering no warns that Auth0 is necessary for the demo, then stops after saving the KMS choice: every command trusts the OS user, and there is no operator scope gate. Anyone who can run `keyforge` as this user can create, reveal, and delete keys. Turn Auth0 on later by running `keyforge setup` again after the dashboard work below. `keyforge auth status` reports `auth disabled` until then.
 
