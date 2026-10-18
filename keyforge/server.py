@@ -14,11 +14,15 @@ from . import BANNER, __version__, service as svc
 from .errors import VerifyFailed
 from .store import Store
 
+# path -> {method: required scopes tuple, or None for open}
 ROUTES = {
-    "/health": None,           # no auth
-    "/whoami": (),             # any valid key
-    "/packets": ("read:packets",),
-    "/admin": ("write:packets",),
+    "/health": {"GET": None},
+    "/whoami": {"GET": ()},
+    "/packets": {"GET": ("read:packets",)},
+    "/admin": {"GET": ("write:packets",)},
+    # Failure demo: client attempts to create a secret. Requires API-key scope keys:write.
+    # The walkthrough key only has read:packets, so POST /keys returns 403. Does not mint a key.
+    "/keys": {"POST": ("keys:write",)},
 }
 
 
@@ -39,12 +43,13 @@ def client_ip(handler: BaseHTTPRequestHandler) -> str:
 def dispatch(store_path: str, method: str, path: str, authorization: str | None,
              ip: str | None) -> tuple[int, dict]:
     """Pure request handler used by the HTTP adapter and unit tests."""
-    if method != "GET":
-        return 405, {"error": "method not allowed"}
     route = urlparse(path).path
-    if route not in ROUTES:
+    methods = ROUTES.get(route)
+    if methods is None:
         return 404, {"error": "not found"}
-    required = ROUTES[route]
+    if method not in methods:
+        return 405, {"error": "method not allowed"}
+    required = methods[method]
     if required is None:
         return 200, {"ok": True, "service": "keyforge-demo", "version": __version__}
 
@@ -96,7 +101,12 @@ def make_handler(store_path: str):
             self._write(status, body)
 
         def do_POST(self):
-            self._write(405, {"error": "method not allowed"})
+            status, body = dispatch(
+                store_path, "POST", self.path,
+                self.headers.get("Authorization"),
+                client_ip(self),
+            )
+            self._write(status, body)
 
     return Handler
 
@@ -106,7 +116,8 @@ def serve(store_path: str, host: str = "127.0.0.1", port: int = 8787) -> int:
     httpd = ThreadingHTTPServer((host, port), make_handler(store_path))
     print(f"{BANNER}")
     print(f"demo server listening on http://{host}:{port}")
-    print("routes: GET /health (open), GET /whoami (any key), GET /packets (scope read:packets), GET /admin (scope write:packets)")
+    print("routes: GET /health (open), GET /whoami (any key), GET /packets (scope read:packets),")
+    print("        GET /admin (scope write:packets), POST /keys (scope keys:write; failure demo)")
     print("auth:   Authorization: Bearer <kf_... secret>")
     try:
         httpd.serve_forever()

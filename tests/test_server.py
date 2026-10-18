@@ -90,6 +90,15 @@ class DispatchTests(_ServerFixture):
         self.assertEqual(status, 403)
         self.assertEqual(body["error"], "missing scope 'write:packets'")
 
+    def test_keys_post_rejects_demo_key_without_keys_write(self):
+        status, body = server.dispatch(
+            self.path, "POST", "/keys", None, "127.0.0.1")
+        self.assertEqual(status, 401)
+        status, body = server.dispatch(
+            self.path, "POST", "/keys", f"Bearer {self.secret}", "127.0.0.1")
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"], "missing scope 'keys:write'")
+
     def test_bad_secret(self):
         status, body = server.dispatch(
             self.path, "GET", "/whoami", "Bearer kf_test_nope1234567890123456789012", "127.0.0.1")
@@ -98,6 +107,7 @@ class DispatchTests(_ServerFixture):
     def test_unknown_route_and_method(self):
         self.assertEqual(server.dispatch(self.path, "GET", "/nope", None, "127.0.0.1")[0], 404)
         self.assertEqual(server.dispatch(self.path, "POST", "/health", None, "127.0.0.1")[0], 405)
+        self.assertEqual(server.dispatch(self.path, "GET", "/keys", f"Bearer {self.secret}", "127.0.0.1")[0], 405)
 
 
 class LiveServerTests(_ServerFixture):
