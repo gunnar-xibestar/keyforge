@@ -78,12 +78,12 @@ SOFTHSM2_CONF="$HOME/.keyforge/softhsm/softhsm2.conf" \
 #### Step 2. Whether to set up Auth0
 
 ```
-Set up Auth0 now? [y/N]
+Set up Auth0 now? [Y/n]
 ```
 
-Auth0 is **off** until all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE` are set. Setting only some of them is an error.
+Pressing Enter accepts yes. Auth0 is **off** until all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE` are set. Setting only some of them is an error.
 
-Answering no prints the restriction and stops after saving the KMS choice: every command trusts the OS user, and there is no operator scope gate. Anyone who can run `keyforge` as this user can create, reveal, and delete keys. `auth status` then reports `auth disabled`. Turn Auth0 on later by running `keyforge setup` again after the dashboard work below.
+Answering no warns that Auth0 is necessary for the demo, then stops after saving the KMS choice: every command trusts the OS user, and there is no operator scope gate. Anyone who can run `keyforge` as this user can create, reveal, and delete keys. `auth status` then reports `auth disabled`. Turn Auth0 on later by running `keyforge setup` again after the dashboard work below.
 
 #### Step 3. Auth0 settings
 

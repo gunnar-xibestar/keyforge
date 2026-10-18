@@ -115,8 +115,11 @@ def _ask(read_line, prompt: str) -> str:
     return read_line(prompt).strip()
 
 
-def _yes(read_line, prompt: str) -> bool:
-    return _ask(read_line, prompt).lower() in ("y", "yes")
+def _yes(read_line, prompt: str, *, default: bool = False) -> bool:
+    ans = _ask(read_line, prompt).lower()
+    if not ans:
+        return default
+    return ans in ("y", "yes")
 
 
 def run(*, read_line, read_secret, echo, login=None) -> dict:
@@ -171,9 +174,10 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
             saved["KEYFORGE_PKCS11_CREATE_KEY"] = create
 
     echo("")
-    echo("Auth0 operator login is optional. It is off until AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_AUDIENCE are all set.")
-    if not _yes(read_line, "Set up Auth0 now? [y/N] "):
+    echo("Auth0 operator login is off until AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_AUDIENCE are all set.")
+    if not _yes(read_line, "Set up Auth0 now? [Y/n] ", default=True):
         echo("")
+        echo("warning: Auth0 is necessary for the demo. Skipping it leaves operator login disabled.")
         echo("warning: Auth0 is not set up. Every command trusts the OS user.")
         echo("warning: there is no operator scope gate. Anyone who can run keyforge as this user can create, reveal, and delete keys.")
         echo("warning: turn it on later with `keyforge setup` after creating a Native app and an API in the Auth0 dashboard.")

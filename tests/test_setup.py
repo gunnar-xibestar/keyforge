@@ -61,6 +61,7 @@ class SetupTests(unittest.TestCase):
         local = text.index("  local\n")
         pkcs = text.index("  pkcs11\n")
         self.assertIn("\n\n  pkcs11\n", text[local:pkcs + 12])
+        self.assertIn("necessary for the demo", text)
         self.assertIn("trusts the OS user", text)
         self.assertIn("auth status: auth disabled", text)
         self.assertIn("dpkg -L softhsm2", text)
