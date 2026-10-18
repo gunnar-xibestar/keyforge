@@ -1,10 +1,11 @@
 """Interactive boot: KMS provider, optional Auth0, then username and password.
 
 Writes ``~/.keyforge/keyforge.env`` (mode 0600). Later commands load it
-when a variable is unset. The Auth0 password is never written there.
+when a variable is unset. A different value already in the environment is
+kept, and the conflict is printed. The Auth0 password is never written there.
 """
 from __future__ import annotations
-import os, shlex, stat
+import os, shlex, stat, sys
 from pathlib import Path
 
 from . import auth
@@ -29,15 +30,24 @@ _PROVIDER_TEXT = {
         "Anyone who can read that file and the store can reveal secrets. "
         "Put KEYFORGE_KMS_KEY_FILE outside the store directory for a separate permission boundary."
     ),
-    "pkcs11": (
-        "pkcs11 — AES key stays on the token and is not exported. "
-        "Module: KEYFORGE_PKCS11_MODULE (SoftHSM is often /usr/lib/softhsm/libsofthsm2.so; "
-        "`dpkg -L softhsm2 | grep '\\.so$'`). "
-        "Token label: KEYFORGE_PKCS11_TOKEN (`softhsm2-util --show-slots`). "
-        "User PIN: KEYFORGE_PKCS11_PIN (the PIN from --init-token, not the SO PIN). "
-        "Key label: KEYFORGE_PKCS11_KEY_LABEL. "
-        "SOFTHSM2_CONF points at the softhsm2.conf whose tokendir you created."
-    ),
+    "pkcs11": "\n".join((
+        "pkcs11 — AES key stays on the token and is not exported.",
+        "",
+        "Module: KEYFORGE_PKCS11_MODULE",
+        "  SoftHSM is often /usr/lib/softhsm/libsofthsm2.so",
+        "  dpkg -L softhsm2 | grep '\\.so$'",
+        "",
+        "Token label: KEYFORGE_PKCS11_TOKEN",
+        "  softhsm2-util --show-slots",
+        "",
+        "User PIN: KEYFORGE_PKCS11_PIN",
+        "  the PIN from --init-token, not the SO PIN",
+        "",
+        "Key label: KEYFORGE_PKCS11_KEY_LABEL",
+        "",
+        "SOFTHSM2_CONF",
+        "  the softhsm2.conf whose tokendir you created",
+    )),
     "memory": (
         "memory — replaces pkcs11 and local for unit tests. "
         "The key lives in the process (KEYFORGE_KMS_MEMORY_KEY may pin 64 hex chars). "
@@ -50,8 +60,17 @@ def env_path() -> Path:
     return Path(os.path.expanduser(os.environ.get("KEYFORGE_ENV_FILE") or "~/.keyforge/keyforge.env"))
 
 
+_HIDDEN_VALUES = frozenset({
+    "KEYFORGE_PKCS11_PIN", "AUTH0_CLIENT_SECRET", "KEYFORGE_KMS_MEMORY_KEY",
+})
+
+
 def load_env_file(path: Path | None = None) -> None:
-    """Apply KEY=VALUE lines when the variable is not already set. Never overrides."""
+    """Apply KEY=VALUE lines when the variable is not already set. Never overrides.
+
+    A variable already set to a different value is left alone and reported on
+    stderr, so a shell export cannot silently hide ``keyforge.env``.
+    """
     path = path or env_path()
     try:
         text = path.read_text()
@@ -77,9 +96,23 @@ def load_env_file(path: Path | None = None) -> None:
         if "=" not in token:
             continue
         key, value = token.split("=", 1)
-        if not key or key in os.environ:
+        if not key:
             continue
-        os.environ[key] = value
+        current = os.environ.get(key)
+        if current is None:
+            os.environ[key] = value
+            continue
+        if current == value:
+            continue
+        if key in _HIDDEN_VALUES:
+            detail = "a different value"
+        else:
+            detail = f"{value!r}"
+        print(
+            f"keyforge: {key} is {current!r} from the environment; {path} has {detail}. "
+            "The environment value is used.",
+            file=sys.stderr,
+        )
 
 
 def _write_env(values: dict[str, str]) -> Path:
@@ -125,18 +158,18 @@ def _yes(read_line, prompt: str, *, default: bool = False) -> bool:
 def run(*, read_line, read_secret, echo, login=None) -> dict:
     """Prompt for KMS, then Auth0. ``login`` defaults to ``auth.password_login``."""
     _marks(echo, 3)
-    if not env_path().exists():
-        echo("")
-        for line in _BANNER.splitlines():
-            echo(line)
-        echo("")
+    echo("")
+    for line in _BANNER.splitlines():
+        echo(line)
+    echo("")
     echo("KMS provider (KEYFORGE_KMS_PROVIDER). Setup saves the answer; a bare assignment in a file is not enough.")
     echo("")
     for i, name in enumerate(_PROVIDERS):
         if i:
             echo("")
         echo(f"  {name}")
-        echo(f"    {_PROVIDER_TEXT[name]}")
+        for line in _PROVIDER_TEXT[name].splitlines():
+            echo(f"    {line}" if line else "")
     echo("")
     choice = _ask(read_line, "KEYFORGE_KMS_PROVIDER [local]: ").lower() or "local"
     if choice not in _PROVIDERS:
@@ -154,8 +187,6 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         if key_file:
             saved["KEYFORGE_KMS_KEY_FILE"] = key_file
     elif choice == "pkcs11":
-        echo("Prepare SoftHSM before the module path. Run this in another terminal:")
-        echo("")
         echo("  mkdir -p \"$HOME/.keyforge/softhsm/tokens\"")
         echo("  printf 'directories.tokendir = %s\\nobjectstore.backend = file\\nlog.level = ERROR\\n' \\")
         echo("    \"$HOME/.keyforge/softhsm/tokens\" > \"$HOME/.keyforge/softhsm/softhsm2.conf\"")

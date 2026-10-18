@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "keyforge"
-version = "0.2.0"
+version = "0.3.0"
 description = "API key manager with envelope encryption, a local or PKCS#11 KMS, and optional Auth0"
 requires-python = ">=3.10"
 readme = "README.md"

@@ -125,7 +125,8 @@ class SetupTests(unittest.TestCase):
         self.assertIn("logged in as auth0|ada", text)
         self.assertNotIn("auth status", text)
         self.assertNotIn("scopes:", text)
-        self.assertIn("Prepare SoftHSM before the module path", text)
+        self.assertIn("softhsm2-util --init-token", text)
+        self.assertNotIn("another terminal", text)
         self.assertLess(prompts.index("Press Enter when the token exists: "), prompts.index("KEYFORGE_PKCS11_MODULE [/usr/lib/softhsm/libsofthsm2.so]: "))
         self.assertIn("Applications → APIs", text)
         body = Path(self.env_file).read_text()
@@ -151,8 +152,12 @@ class SetupTests(unittest.TestCase):
         setup_mod.load_env_file()
         self.assertEqual(os.environ["KEYFORGE_KMS_PROVIDER"], "local")
         os.environ["KEYFORGE_KMS_PROVIDER"] = "memory"
-        setup_mod.load_env_file()
+        err = io.StringIO()
+        with redirect_stderr(err):
+            setup_mod.load_env_file()
         self.assertEqual(os.environ["KEYFORGE_KMS_PROVIDER"], "memory")
+        self.assertIn("KEYFORGE_KMS_PROVIDER is 'memory' from the environment", err.getvalue())
+        self.assertIn("keyforge.env has 'local'", err.getvalue())
 
 
 if __name__ == "__main__":
