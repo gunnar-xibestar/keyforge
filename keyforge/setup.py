@@ -1,7 +1,7 @@
 """Interactive boot: KMS provider, optional Auth0, then username and password.
 
-Writes ``~/.keyforge/keyforge.env`` (mode 0600) so a later shell can
-``source`` it. The Auth0 password is never written there.
+Writes ``~/.keyforge/keyforge.env`` (mode 0600). Later commands load it
+when a variable is unset. The Auth0 password is never written there.
 """
 from __future__ import annotations
 import os, shlex, stat
@@ -77,7 +77,7 @@ def _write_env(values: dict[str, str]) -> Path:
     path = env_path()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     lines = [
-        "# KeyForge boot config. source this file in your shell.",
+        "# KeyForge boot config. Loaded when a variable is unset.",
         "# The Auth0 password is not stored here.",
     ]
     for key, value in values.items():
@@ -168,7 +168,6 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         echo("")
         echo(_status_text(info))
         echo(f"saved: {path}")
-        echo(f"source {path}")
         return {"kms_provider": choice, "auth": info, "env_file": str(path)}
 
     echo("")

@@ -37,7 +37,7 @@ Store: `--store PATH`, `$KEYFORGE_STORE`, or `~/.keyforge/store.json`. Writes ar
 
 ### 2. `keyforge setup`
 
-Run `keyforge setup`. It is interactive and refuses a non-interactive stdin. `keyforge` with no command exits with a usage error. The prompt writes every answer except the Auth0 password to `~/.keyforge/keyforge.env` (mode 0600). Later commands load that file when a variable is unset. `source ~/.keyforge/keyforge.env` exports them into your shell.
+Run `keyforge setup`. It is interactive and refuses a non-interactive stdin. `keyforge` with no command exits with a usage error. The prompt writes every answer except the Auth0 password to `~/.keyforge/keyforge.env` (mode 0600). Later commands load that file when a variable is unset.
 
 The steps below are the prompt, in order. The reference material for each step sits under that step.
 
@@ -49,7 +49,7 @@ The screen prints where each value comes from, then asks:
 KEYFORGE_KMS_PROVIDER [local]:
 ```
 
-**Export** it. A bare `KEYFORGE_KMS_PROVIDER=pkcs11` line does not put the variable in the environment for `keyforge`. Auth0 `auth login` / `auth status` do **not** use the KMS — only `create`, `rotate`, and `reveal` (and envelope import) do. After setup, check the active provider with `keyforge kms status`. There is no AWS or GCP provider.
+Setup records the answer. Auth0 `auth login` / `auth status` do **not** use the KMS — only `create`, `rotate`, and `reveal` (and envelope import) do. After setup, check the active provider with `keyforge kms status`. There is no AWS or GCP provider.
 
 | provider | what wraps the data key |
 |---|---|
@@ -67,8 +67,8 @@ Prepare SoftHSM before that prompt:
 mkdir -p "$HOME/.keyforge/softhsm/tokens"
 printf 'directories.tokendir = %s\nobjectstore.backend = file\nlog.level = ERROR\n' \
   "$HOME/.keyforge/softhsm/tokens" > "$HOME/.keyforge/softhsm/softhsm2.conf"
-export SOFTHSM2_CONF="$HOME/.keyforge/softhsm/softhsm2.conf"
-softhsm2-util --init-token --free --label keyforge --pin "$PIN" --so-pin "$SO_PIN"
+SOFTHSM2_CONF="$HOME/.keyforge/softhsm/softhsm2.conf" \
+  softhsm2-util --init-token --free --label keyforge --pin "$PIN" --so-pin "$SO_PIN"
 ```
 
 `keyforge kms status` then reports `provider: pkcs11` and `ready: True`, or lists what is missing. `Pkcs11Kms` talks to any object with `wrap(label, dek, aad)` / `unwrap(label, blob, aad)`. `Pkcs11Token` is the real session. `FakePkcs11Token` is the in-memory stand-in the unit tests use when they are not pointing at SoftHSM. Point the variables above at a hardware module to use one; no code change is required.
@@ -96,12 +96,12 @@ Answering yes prints where each value is in the dashboard (https://manage.auth0.
 5. Turn **off** “Add Permissions in the Access Token” (KeyForge reads a short `scope` claim only; see [Token diet](#token-diet)). If **Enable RBAC** is on, also assign those permissions to the Auth0 user (or role) — Auth0 only puts granted permissions into `scope`.
 6. Under Applications → your Native app → APIs, authorize the app for that API and allow the same permissions.
 
-The three prompts, and the exports they write:
+The three prompts:
 
 ```
-export AUTH0_DOMAIN=your-tenant.us.auth0.com    # Settings → Domain. Hostname only, no https://
-export AUTH0_CLIENT_ID=your_native_app_client_id # Applications → Native app → Settings → Client ID
-export AUTH0_AUDIENCE=https://keyforge.local/api # Applications → APIs → Settings → Identifier
+AUTH0_DOMAIN      Settings → Domain. Hostname only, no https://
+AUTH0_CLIENT_ID   Applications → Native app → Settings → Client ID
+AUTH0_AUDIENCE    Applications → APIs → Settings → Identifier (for example https://keyforge.local/api)
 ```
 
 `AUTH0_CLIENT_SECRET` is optional and environment-only. Setup does not ask for it, and it is never stored. `AUTH0_SCOPES` overrides the scope string requested at login. The default is:
