@@ -58,7 +58,12 @@ FORBIDDEN_CLAIMS = frozenset({
     "given_name", "family_name", "user_metadata", "app_metadata", "identities",
 })
 _TOKEN_FILE_KEYS = frozenset({"version", "access_token", "refresh_token", "expires_at", "token_type", "scope", "sub"})
-_CLAIM_LIMITS = {"azp": 128, "gty": 80, "jti": 64}
+_CLAIM_LIMITS = {"azp": 128, "jti": 64}
+# Auth0 usually sends a short string (``password``, ``client-credentials``,
+# ``refresh_token``, or a grant-type URN). Some tenants/flows emit a short
+# array of those strings after refresh; both shapes stay within the diet.
+_GTY_LIMIT = 80
+_MAX_GTY_VALUES = 4
 _B64 = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
 _HOST = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
@@ -228,6 +233,19 @@ def _check_scopes(scope: str) -> frozenset:
     return frozenset(parts)
 
 
+def _check_gty(value) -> None:
+    """Accept Auth0's short string or short string-array ``gty`` claim."""
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, list) and 1 <= len(value) <= _MAX_GTY_VALUES:
+        values = value
+    else:
+        raise AuthError("access token is overstuffed: claim gty is too large")
+    for item in values:
+        if not isinstance(item, str) or not 1 <= len(item) <= _GTY_LIMIT:
+            raise AuthError("access token is overstuffed: claim gty is too large")
+
+
 def requested_scopes() -> frozenset:
     """Scopes KeyForge asks Auth0 for at device login (``AUTH0_SCOPES`` or the default set)."""
     return _check_scopes(os.environ.get("AUTH0_SCOPES") or DEFAULT_SCOPES)
@@ -306,6 +324,8 @@ def validate_access_token(token: str, *, now: float | None = None) -> Principal:
     for name, limit in _CLAIM_LIMITS.items():
         if name in payload and (not isinstance(payload[name], str) or len(payload[name]) > limit):
             raise AuthError(f"access token is overstuffed: claim {name} is too large")
+    if "gty" in payload:
+        _check_gty(payload["gty"])
     iat, exp = payload.get("iat"), payload.get("exp")
     if type(iat) is not int or type(exp) is not int:
         raise AuthError("access token iat and exp must be integers")

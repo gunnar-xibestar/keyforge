@@ -218,6 +218,38 @@ class AuthTests(unittest.TestCase):
         with self.assertRaises(AuthError):
             auth.validate_access_token(self.sign(self.payload()))
 
+    def test_gty_accepts_auth0_string_and_array_shapes(self):
+        """Auth0 may emit ``gty`` as a short string or a short grant-type array."""
+        for gty in (
+            "password",
+            "client-credentials",
+            "refresh_token",
+            "urn:ietf:params:oauth:grant-type:device_code",
+            ["password"],
+            ["password", "refresh_token"],
+            ["urn:ietf:params:oauth:grant-type:device_code", "refresh_token"],
+        ):
+            with self.subTest(gty=gty):
+                principal = auth.validate_access_token(self.sign(self.payload(gty=gty)))
+                self.assertEqual(principal.sub, "auth0|alice")
+
+        with self.assertRaises(AuthError) as cm:
+            auth.validate_access_token(self.sign(self.payload(gty="x" * 81)))
+        self.assertIn("claim gty is too large", str(cm.exception))
+
+        with self.assertRaises(AuthError) as cm:
+            auth.validate_access_token(self.sign(self.payload(gty=["password", "x" * 81])))
+        self.assertIn("claim gty is too large", str(cm.exception))
+
+        with self.assertRaises(AuthError) as cm:
+            auth.validate_access_token(self.sign(self.payload(
+                gty=["a", "b", "c", "d", "e"])))
+        self.assertIn("claim gty is too large", str(cm.exception))
+
+        with self.assertRaises(AuthError) as cm:
+            auth.validate_access_token(self.sign(self.payload(gty={"grant": "password"})))
+        self.assertIn("claim gty is too large", str(cm.exception))
+
     def test_command_requires_principal_and_bad_scope_exits_4(self):
         rc, out, err = _run("--json", "list")
         self.assertEqual(rc, 1, err)
