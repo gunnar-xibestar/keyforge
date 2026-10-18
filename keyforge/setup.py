@@ -1,10 +1,11 @@
 """Interactive boot: KMS provider, optional Auth0, then username and password.
 
 Writes ``~/.keyforge/keyforge.env`` (mode 0600). Later commands load it
-when a variable is unset. The Auth0 password is never written there.
+when a variable is unset. A different value already in the environment is
+kept, and the conflict is printed. The Auth0 password is never written there.
 """
 from __future__ import annotations
-import os, shlex, stat
+import os, shlex, stat, sys
 from pathlib import Path
 
 from . import auth
@@ -59,8 +60,17 @@ def env_path() -> Path:
     return Path(os.path.expanduser(os.environ.get("KEYFORGE_ENV_FILE") or "~/.keyforge/keyforge.env"))
 
 
+_HIDDEN_VALUES = frozenset({
+    "KEYFORGE_PKCS11_PIN", "AUTH0_CLIENT_SECRET", "KEYFORGE_KMS_MEMORY_KEY",
+})
+
+
 def load_env_file(path: Path | None = None) -> None:
-    """Apply KEY=VALUE lines when the variable is not already set. Never overrides."""
+    """Apply KEY=VALUE lines when the variable is not already set. Never overrides.
+
+    A variable already set to a different value is left alone and reported on
+    stderr, so a shell export cannot silently hide ``keyforge.env``.
+    """
     path = path or env_path()
     try:
         text = path.read_text()
@@ -86,9 +96,23 @@ def load_env_file(path: Path | None = None) -> None:
         if "=" not in token:
             continue
         key, value = token.split("=", 1)
-        if not key or key in os.environ:
+        if not key:
             continue
-        os.environ[key] = value
+        current = os.environ.get(key)
+        if current is None:
+            os.environ[key] = value
+            continue
+        if current == value:
+            continue
+        if key in _HIDDEN_VALUES:
+            detail = "a different value"
+        else:
+            detail = f"{value!r}"
+        print(
+            f"keyforge: {key} is {current!r} from the environment; {path} has {detail}. "
+            "The environment value is used.",
+            file=sys.stderr,
+        )
 
 
 def _write_env(values: dict[str, str]) -> Path:

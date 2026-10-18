@@ -37,7 +37,7 @@ Store: `--store PATH`, `$KEYFORGE_STORE`, or `~/.keyforge/store.json`. Writes ar
 
 ### 2. `keyforge setup`
 
-Run `keyforge setup`. It is interactive and refuses a non-interactive stdin. `keyforge` with no command exits with a usage error. The prompt writes every answer except the Auth0 password to `~/.keyforge/keyforge.env` (mode 0600). Later commands load that file when a variable is unset.
+Run `keyforge setup`. It is interactive and refuses a non-interactive stdin. `keyforge` with no command exits with a usage error. The prompt writes every answer except the Auth0 password to `~/.keyforge/keyforge.env` (mode 0600). Later commands load that file when a variable is unset. If the shell already exported a different value, the command keeps the shell value and prints which variable disagreed. Unset it (`unset KEYFORGE_KMS_PROVIDER`) to use the file.
 
 The steps below are the prompt, in order. The reference material for each step sits under that step.
 

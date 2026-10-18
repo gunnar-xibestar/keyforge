@@ -152,8 +152,12 @@ class SetupTests(unittest.TestCase):
         setup_mod.load_env_file()
         self.assertEqual(os.environ["KEYFORGE_KMS_PROVIDER"], "local")
         os.environ["KEYFORGE_KMS_PROVIDER"] = "memory"
-        setup_mod.load_env_file()
+        err = io.StringIO()
+        with redirect_stderr(err):
+            setup_mod.load_env_file()
         self.assertEqual(os.environ["KEYFORGE_KMS_PROVIDER"], "memory")
+        self.assertIn("KEYFORGE_KMS_PROVIDER is 'memory' from the environment", err.getvalue())
+        self.assertIn("keyforge.env has 'local'", err.getvalue())
 
 
 if __name__ == "__main__":
