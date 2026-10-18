@@ -83,18 +83,12 @@ class SoftHsmTests(unittest.TestCase):
 
 
 class NewAesKeyNoticeTests(unittest.TestCase):
-    def test_opt_in_warns_that_old_secrets_stay_unreadable(self):
+    def test_warns_that_a_new_key_cannot_read_old_secrets(self):
         from keyforge.kms import _new_aes_key_notice
-        text = _new_aes_key_notice("keyforge-kek", opted_in=True)
+        text = _new_aes_key_notice("keyforge-kek")
         self.assertIn("generated a new AES-256 key labeled 'keyforge-kek'", text)
-        self.assertIn("stay unreadable", text)
-
-    def test_default_explains_the_key_it_created(self):
-        from keyforge.kms import _new_aes_key_notice
-        text = _new_aes_key_notice("keyforge-kek", opted_in=False)
-        self.assertIn("Created a new AES-256 key", text)
-        self.assertIn("not extractable", text)
-        self.assertNotIn("KEYFORGE_PKCS11_CREATE_KEY", text)
+        self.assertIn("cannot read secrets wrapped by an older key", text)
+        self.assertIn("The label is only a name", text)
 
 
 class Pkcs11ConfigTests(unittest.TestCase):

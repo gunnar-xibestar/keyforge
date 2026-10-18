@@ -190,19 +190,12 @@ class FakePkcs11Token:
         return dek
 
 
-def _new_aes_key_notice(label: str, *, opted_in: bool) -> str:
+def _new_aes_key_notice(label: str) -> str:
     """Text printed when a missing token AES key is created."""
-    if opted_in:
-        return (
-            f"keyforge: generated a new AES-256 key labeled {label!r} on the token.\n"
-            "This key does not unwrap secrets wrapped by an older key with the same label. "
-            "Those secrets stay unreadable. Secrets created from now on wrap with this key."
-        )
     return (
-        f"keyforge: no AES key labeled {label!r} was on the token.\n"
-        "Created a new AES-256 key with that label and stored it on the token.\n"
-        "It is marked sensitive and not extractable, so it is not written to the store and it is not exported.\n"
-        "A key created now cannot unwrap secrets wrapped by an older key with this label."
+        f"keyforge: generated a new AES-256 key labeled {label!r} on the token.\n"
+        "This key cannot read secrets wrapped by an older key. "
+        "The label is only a name. The old key material is not in the new key."
     )
 
 
@@ -215,10 +208,8 @@ class Pkcs11Token:
     - ``KEYFORGE_PKCS11_TOKEN``: token label
     - ``KEYFORGE_PKCS11_PIN``: user PIN. Read from the environment only.
       Never written to the store, logs, or error text.
-    - ``KEYFORGE_PKCS11_KEY_LABEL``: AES key label on the token
-    - ``KEYFORGE_PKCS11_CREATE_KEY=1``: a missing AES key is still created; this flag
-      selects the notice. Set, the notice warns that older secrets stay unreadable.
-      Unset, the notice says how the new key was created.
+    - ``KEYFORGE_PKCS11_KEY_LABEL``: AES key label on the token. A missing key
+      is generated on first use. A new key cannot read secrets wrapped by an older one.
 
     SoftHSM also needs ``SOFTHSM2_CONF`` pointing at its config. A hardware
     module uses the same variables with its own ``.so``.
@@ -281,8 +272,7 @@ class Pkcs11Token:
             raise KeyForgeError(f"PKCS#11 token has more than one key labeled {self.key_label!r}")
         if len(found) == 1:
             return found[0]
-        opted_in = os.environ.get("KEYFORGE_PKCS11_CREATE_KEY", "").strip().lower() in ("1", "true", "yes")
-        print(_new_aes_key_notice(self.key_label, opted_in=opted_in), file=sys.stderr)
+        print(_new_aes_key_notice(self.key_label), file=sys.stderr)
         return session.generate_key(
             KeyType.AES, 256, label=self.key_label, store=True,
             template={Attribute.SENSITIVE: True, Attribute.EXTRACTABLE: False,

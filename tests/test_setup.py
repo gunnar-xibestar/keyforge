@@ -107,10 +107,9 @@ class SetupTests(unittest.TestCase):
         answers = iter([
             "pkcs11",
             "",
-            "/usr/lib/softhsm/libsofthsm2.so",
+            "/tmp/no-such-libsofthsm2.so",
             "keyforge",
             "keyforge-kek",
-            "n",
             "",
             "y",
             "tenant.example.test",
@@ -192,10 +191,9 @@ class SetupTests(unittest.TestCase):
         answers = iter([
             "pkcs11",
             "",
-            "/usr/lib/softhsm/libsofthsm2.so",
+            "/tmp/no-such-libsofthsm2.so",
             "keyforge",
             "keyforge-kek",
-            "n",
             "",
             "n",
         ])

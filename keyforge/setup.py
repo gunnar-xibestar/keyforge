@@ -216,8 +216,9 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
             raise KeyForgeError("KEYFORGE_PKCS11_PIN is required for pkcs11")
         label = _ask(read_line, "KEYFORGE_PKCS11_KEY_LABEL [keyforge-kek]: ") or "keyforge-kek"
         if reuse:
-            echo("warning: reuse deletes newer SoftHSM tokens with this label and keeps the oldest. Secrets wrapped by a deleted token cannot be opened. Generating a missing AES key does not restore them.")
-        create = "1" if _yes(read_line, "Generate the AES key on the token if it is missing? [y (warn that old secrets stay unreadable) / N (create it and print how)] ") else ""
+            echo("warning: reuse deletes newer SoftHSM tokens with this label and keeps the oldest. Secrets wrapped by a deleted token cannot be opened.")
+        echo("A missing AES key is generated on the token the first time it is used.")
+        echo("warning: a new key cannot read secrets wrapped by an older key. The label is only a name. The old key material is not in the new key.")
         conf = _ask(read_line, f"SOFTHSM2_CONF [{default_conf}]: ") or default_conf
         if reuse and "softhsm" in os.path.basename(module).lower():
             removed = drop_newer_tokens(token, conf)
@@ -230,8 +231,6 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
             "KEYFORGE_PKCS11_KEY_LABEL": label,
             "SOFTHSM2_CONF": conf,
         })
-        if create:
-            saved["KEYFORGE_PKCS11_CREATE_KEY"] = create
 
     _echo_kms_status(echo, saved)
 
