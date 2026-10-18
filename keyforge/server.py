@@ -14,11 +14,18 @@ from . import BANNER, __version__, service as svc
 from .errors import VerifyFailed
 from .store import Store
 
+# path -> {method: required scopes tuple, or None for open}
 ROUTES = {
-    "/health": None,           # no auth
-    "/whoami": (),             # any valid key
-    "/packets": ("read:packets",),
-    "/admin": ("write:packets",),
+    "/health": {"GET": None},
+    "/whoami": {"GET": ()},
+    "/packets": {"GET": ("read:packets",)},
+    "/admin": {"GET": ("write:packets",)},
+    # Demo of a client attempting to create a secret. Requires API-key scope keys:write.
+    # Does not mint a key; real creates use the CLI with Auth0 operator scope keys:write.
+    "/keys": {"POST": ("keys:write",)},
+    # Success + redact demo: requires read:packets (walkthrough key gets 200) but omits verify
+    # output (hash dump, envelope, verified flag). Stronger scope would be needed for those fields.
+    "/verify": {"GET": ("read:packets",)},
 }
 
 
@@ -39,12 +46,13 @@ def client_ip(handler: BaseHTTPRequestHandler) -> str:
 def dispatch(store_path: str, method: str, path: str, authorization: str | None,
              ip: str | None) -> tuple[int, dict]:
     """Pure request handler used by the HTTP adapter and unit tests."""
-    if method != "GET":
-        return 405, {"error": "method not allowed"}
     route = urlparse(path).path
-    if route not in ROUTES:
+    methods = ROUTES.get(route)
+    if methods is None:
         return 404, {"error": "not found"}
-    required = ROUTES[route]
+    if method not in methods:
+        return 405, {"error": "method not allowed"}
+    required = methods[method]
     if required is None:
         return 200, {"ok": True, "service": "keyforge-demo", "version": __version__}
 
@@ -59,12 +67,40 @@ def dispatch(store_path: str, method: str, path: str, authorization: str | None,
             key = svc.verify(st, secret, scope=scope, ip=ip)
         except VerifyFailed as e:
             return 403, {"error": str(e)}
+        if route == "/verify":
+            # 200: key is valid for the route. Verify-sensitive fields stay out of the body —
+            # read:packets authorizes the call, not a full verify dump (needs a stronger scope).
+            return 200, {
+                "ok": True,
+                "route": route,
+                "required_scope": scope,
+                "key": {
+                    "id": key.id,
+                    "name": key.name,
+                    "prefix": key.prefix,
+                    "env": key.env,
+                    "owner": key.owner,
+                    "scopes": key.scopes,
+                    "status": key.effective_status(),
+                },
+                "note": (
+                    "verify output withheld without a stronger permission "
+                    "(e.g. API-key scope keys:verify)"
+                ),
+            }
         body = {"ok": True, "route": route, "key": {
             "id": key.id, "name": key.name, "prefix": key.prefix, "env": key.env,
             "owner": key.owner, "scopes": key.scopes, "status": key.effective_status(),
         }}
         if scope:
             body["required_scope"] = scope
+        if route == "/keys":
+            body["created"] = False
+            body["note"] = (
+                "Demo only: this route checks API-key scope keys:write. "
+                "It does not mint a secret. Real creates use `keyforge create` "
+                "with Auth0 operator scope keys:write."
+            )
         return 200, body
     finally:
         st.close()
@@ -96,7 +132,12 @@ def make_handler(store_path: str):
             self._write(status, body)
 
         def do_POST(self):
-            self._write(405, {"error": "method not allowed"})
+            status, body = dispatch(
+                store_path, "POST", self.path,
+                self.headers.get("Authorization"),
+                client_ip(self),
+            )
+            self._write(status, body)
 
     return Handler
 
@@ -106,7 +147,9 @@ def serve(store_path: str, host: str = "127.0.0.1", port: int = 8787) -> int:
     httpd = ThreadingHTTPServer((host, port), make_handler(store_path))
     print(f"{BANNER}")
     print(f"demo server listening on http://{host}:{port}")
-    print("routes: GET /health (open), GET /whoami (any key), GET /packets (scope read:packets), GET /admin (scope write:packets)")
+    print("routes: GET /health (open), GET /whoami (any key), GET /packets (scope read:packets),")
+    print("        GET /admin (scope write:packets), POST /keys (scope keys:write; demo only, no mint),")
+    print("        GET /verify (scope read:packets; verify output redacted)")
     print("auth:   Authorization: Bearer <kf_... secret>")
     try:
         httpd.serve_forever()
