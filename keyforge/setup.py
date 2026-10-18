@@ -158,11 +158,10 @@ def _yes(read_line, prompt: str, *, default: bool = False) -> bool:
 def run(*, read_line, read_secret, echo, login=None) -> dict:
     """Prompt for KMS, then Auth0. ``login`` defaults to ``auth.password_login``."""
     _marks(echo, 3)
-    if not env_path().exists():
-        echo("")
-        for line in _BANNER.splitlines():
-            echo(line)
-        echo("")
+    echo("")
+    for line in _BANNER.splitlines():
+        echo(line)
+    echo("")
     echo("KMS provider (KEYFORGE_KMS_PROVIDER). Setup saves the answer; a bare assignment in a file is not enough.")
     echo("")
     for i, name in enumerate(_PROVIDERS):
