@@ -1,4 +1,4 @@
-"""Boot prompt: KMS choice, Auth0 warning, username then password, then auth status."""
+"""Boot prompt: KMS choice, Auth0 warning, then username and password."""
 import io, os, stat, tempfile, unittest
 from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
@@ -61,8 +61,9 @@ class SetupTests(unittest.TestCase):
         local = text.index("  local\n")
         pkcs = text.index("  pkcs11\n")
         self.assertIn("\n\n  pkcs11\n", text[local:pkcs + 12])
+        self.assertIn("necessary for the demo", text)
         self.assertIn("trusts the OS user", text)
-        self.assertIn("auth status: auth disabled", text)
+        self.assertNotIn("auth status", text)
         self.assertIn("dpkg -L softhsm2", text)
         self.assertNotIn("Settings → Domain", text)
         body = Path(self.env_file).read_text()
@@ -75,6 +76,7 @@ class SetupTests(unittest.TestCase):
     def test_auth0_asks_username_then_password_and_prints_status(self):
         answers = iter([
             "pkcs11",
+            "",
             "/usr/lib/softhsm/libsofthsm2.so",
             "keyforge",
             "keyforge-kek",
@@ -121,8 +123,10 @@ class SetupTests(unittest.TestCase):
         self.assertLess(user_at, prompts.index("password: "))
         text = "\n".join(self.lines)
         self.assertIn("logged in as auth0|ada", text)
-        self.assertIn("scopes: keys:read", text)
-        self.assertIn("missing_scopes: keys:write", text)
+        self.assertNotIn("auth status", text)
+        self.assertNotIn("scopes:", text)
+        self.assertIn("Prepare SoftHSM before the module path", text)
+        self.assertLess(prompts.index("Press Enter when the token exists: "), prompts.index("KEYFORGE_PKCS11_MODULE [/usr/lib/softhsm/libsofthsm2.so]: "))
         self.assertIn("Applications → APIs", text)
         body = Path(self.env_file).read_text()
         self.assertIn("KEYFORGE_KMS_PROVIDER=pkcs11", body)

@@ -59,17 +59,7 @@ Setup records the answer. Auth0 `auth login` / `auth status` do **not** use the 
 
 **If you enter `local`.** Setup asks for `KEYFORGE_KMS_KEY_FILE`. Leave it blank to keep the key at `<store-dir>/kms-master.key`. The default store is `~/.keyforge/store.json`, so the default key is `~/.keyforge/kms-master.key`. The file is a software KEK. Put `KEYFORGE_KMS_KEY_FILE` outside the store directory if the ciphertext and the wrapping key should sit on different permission boundaries. Anyone who can read both can reveal secrets. Find the store with `echo "${KEYFORGE_STORE:-$HOME/.keyforge/store.json}"`.
 
-**If you enter `pkcs11`.** Install the binding and a module first (see [Package](#1-package)). Setup then asks, in order, for `KEYFORGE_PKCS11_MODULE` (default `/usr/lib/softhsm/libsofthsm2.so`; `dpkg -L softhsm2 | grep '\.so$'`), `KEYFORGE_PKCS11_TOKEN` (default `keyforge`; `softhsm2-util --show-slots`), the user PIN (`KEYFORGE_PKCS11_PIN`, from `--init-token --pin`, not the SO PIN), `KEYFORGE_PKCS11_KEY_LABEL` (default `keyforge-kek`), whether to set `KEYFORGE_PKCS11_CREATE_KEY=1` so a missing label is generated on the token, and `SOFTHSM2_CONF` (default `~/.keyforge/softhsm/softhsm2.conf`). The PIN is stored in `keyforge.env` at mode 0600. It is not written to the store or to logs.
-
-Prepare SoftHSM before that prompt:
-
-```
-mkdir -p "$HOME/.keyforge/softhsm/tokens"
-printf 'directories.tokendir = %s\nobjectstore.backend = file\nlog.level = ERROR\n' \
-  "$HOME/.keyforge/softhsm/tokens" > "$HOME/.keyforge/softhsm/softhsm2.conf"
-SOFTHSM2_CONF="$HOME/.keyforge/softhsm/softhsm2.conf" \
-  softhsm2-util --init-token --free --label keyforge --pin "$PIN" --so-pin "$SO_PIN"
-```
+**If you enter `pkcs11`.** Install the binding and a module first (see [Package](#1-package)). Setup prints the SoftHSM token commands and waits until you press Enter, then asks, in order, for `KEYFORGE_PKCS11_MODULE` (default `/usr/lib/softhsm/libsofthsm2.so`; `dpkg -L softhsm2 | grep '\.so$'`), `KEYFORGE_PKCS11_TOKEN` (default `keyforge`; `softhsm2-util --show-slots`), the user PIN (`KEYFORGE_PKCS11_PIN`, from `--init-token --pin`, not the SO PIN), `KEYFORGE_PKCS11_KEY_LABEL` (default `keyforge-kek`), whether to generate the AES key when the label is missing (`y` less-secure, `N` strict), and `SOFTHSM2_CONF` (default `~/.keyforge/softhsm/softhsm2.conf`). The PIN is stored in `keyforge.env` at mode 0600. It is not written to the store or to logs.
 
 `keyforge kms status` then reports `provider: pkcs11` and `ready: True`, or lists what is missing. `Pkcs11Kms` talks to any object with `wrap(label, dek, aad)` / `unwrap(label, blob, aad)`. `Pkcs11Token` is the real session. `FakePkcs11Token` is the in-memory stand-in the unit tests use when they are not pointing at SoftHSM. Point the variables above at a hardware module to use one; no code change is required.
 
@@ -78,12 +68,12 @@ SOFTHSM2_CONF="$HOME/.keyforge/softhsm/softhsm2.conf" \
 #### Step 2. Whether to set up Auth0
 
 ```
-Set up Auth0 now? [y/N]
+Set up Auth0 now? [Y/n]
 ```
 
-Auth0 is **off** until all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE` are set. Setting only some of them is an error.
+Pressing Enter accepts yes. Auth0 is **off** until all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE` are set. Setting only some of them is an error.
 
-Answering no prints the restriction and stops after saving the KMS choice: every command trusts the OS user, and there is no operator scope gate. Anyone who can run `keyforge` as this user can create, reveal, and delete keys. `auth status` then reports `auth disabled`. Turn Auth0 on later by running `keyforge setup` again after the dashboard work below.
+Answering no warns that Auth0 is necessary for the demo, then stops after saving the KMS choice: every command trusts the OS user, and there is no operator scope gate. Anyone who can run `keyforge` as this user can create, reveal, and delete keys. Turn Auth0 on later by running `keyforge setup` again after the dashboard work below. `keyforge auth status` reports `auth disabled` until then.
 
 #### Step 3. Auth0 settings
 
@@ -121,13 +111,9 @@ password:
 
 The username is the database user (User Management → Users), usually the email. It is not the Client ID. The password is that user's password. It is not the Client Secret. It is sent with Auth0's password-realm grant and is not written to disk. The default realm is `Username-Password-Authentication` (`AUTH0_REALM` overrides it). That grant has to be enabled on the Native app.
 
-`auth login` remains a separate device-code command: it prints a URL and a short code, then stores a lean access token (and a refresh token when issued) in `KEYFORGE_TOKEN_FILE` or `~/.keyforge/tokens.json` (mode 0600). `auth login --from-file response.json` validates a token response you already have; `id_token` is discarded. `auth logout` deletes the token file. `auth login`, `auth status`, and `auth logout` do not require an existing principal.
+`auth login` remains a separate device-code command: it prints a URL and a short code, then stores a lean access token (and a refresh token when issued) in `KEYFORGE_TOKEN_FILE` or `~/.keyforge/tokens.json` (mode 0600). `auth login --from-file response.json` validates a token response you already have; `id_token` is discarded. `auth logout` deletes the token file. `auth login`, `auth status`, and `auth logout` do not require an existing principal. Setup does not print `auth status`. Run `keyforge auth status` when you want the principal, scopes, and `missing_scopes`. It never prints the token.
 
-#### Step 5. `auth status`
-
-Setup prints `auth status` itself: principal, scopes, expiry, and `missing_scopes`. It never prints the token.
-
-Auth0 returns the **intersection** of what KeyForge requested and what the tenant grants. Permission names must match exactly (trailing spaces in Auth0 silently drop a scope). If status shows only `keys:read` and `offline_access`, the other permissions are missing in the API, the app grant, or the user assignment. KeyForge is not dropping them.
+Auth0 returns the **intersection** of what KeyForge requested and what the tenant grants. Permission names must match exactly (trailing spaces in Auth0 silently drop a scope). If `keyforge auth status` shows only `keys:read` and `offline_access`, the other permissions are missing in the API, the app grant, or the user assignment. KeyForge is not dropping them.
 
 Until you log in, gated commands fail. After login, each command needs the matching scope. A missing scope exits **4**. The audit `actor` is the Auth0 `sub` unless `KEYFORGE_ACTOR` is already set. `os_user` remains the process uid. KeyForge does not call the Auth0 Management API or `/userinfo`. API-key secrets are not sent to Auth0.
 

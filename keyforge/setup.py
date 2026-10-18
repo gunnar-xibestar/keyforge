@@ -115,8 +115,11 @@ def _ask(read_line, prompt: str) -> str:
     return read_line(prompt).strip()
 
 
-def _yes(read_line, prompt: str) -> bool:
-    return _ask(read_line, prompt).lower() in ("y", "yes")
+def _yes(read_line, prompt: str, *, default: bool = False) -> bool:
+    ans = _ask(read_line, prompt).lower()
+    if not ans:
+        return default
+    return ans in ("y", "yes")
 
 
 def run(*, read_line, read_secret, echo, login=None) -> dict:
@@ -151,6 +154,19 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         if key_file:
             saved["KEYFORGE_KMS_KEY_FILE"] = key_file
     elif choice == "pkcs11":
+        echo("Prepare SoftHSM before the module path. Run this in another terminal:")
+        echo("")
+        echo("  mkdir -p \"$HOME/.keyforge/softhsm/tokens\"")
+        echo("  printf 'directories.tokendir = %s\\nobjectstore.backend = file\\nlog.level = ERROR\\n' \\")
+        echo("    \"$HOME/.keyforge/softhsm/tokens\" > \"$HOME/.keyforge/softhsm/softhsm2.conf\"")
+        echo("  SOFTHSM2_CONF=\"$HOME/.keyforge/softhsm/softhsm2.conf\" \\")
+        echo("    softhsm2-util --init-token --free --label keyforge --pin \"$PIN\" --so-pin \"$SO_PIN\"")
+        echo("")
+        echo("The module is often /usr/lib/softhsm/libsofthsm2.so (dpkg -L softhsm2 | grep '\\.so$').")
+        echo("A hardware token skips softhsm2-util and uses that vendor's .so instead.")
+        echo("")
+        _ask(read_line, "Press Enter when the token exists: ")
+        echo("")
         module = _ask(read_line, "KEYFORGE_PKCS11_MODULE [/usr/lib/softhsm/libsofthsm2.so]: ") or "/usr/lib/softhsm/libsofthsm2.so"
         token = _ask(read_line, "KEYFORGE_PKCS11_TOKEN [keyforge]: ") or "keyforge"
         echo("PIN is the token user PIN from softhsm2-util --init-token --pin, not the SO PIN.")
@@ -158,7 +174,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         if not pin:
             raise KeyForgeError("KEYFORGE_PKCS11_PIN is required for pkcs11")
         label = _ask(read_line, "KEYFORGE_PKCS11_KEY_LABEL [keyforge-kek]: ") or "keyforge-kek"
-        create = "1" if _yes(read_line, "Generate the AES key on the token if it is missing? [y/N] ") else ""
+        create = "1" if _yes(read_line, "Generate the AES key on the token if it is missing? [y (less-secure) / N (strict)] ") else ""
         conf = _ask(read_line, "SOFTHSM2_CONF [$HOME/.keyforge/softhsm/softhsm2.conf]: ") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
         saved.update({
             "KEYFORGE_PKCS11_MODULE": module,
@@ -171,9 +187,11 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
             saved["KEYFORGE_PKCS11_CREATE_KEY"] = create
 
     echo("")
-    echo("Auth0 operator login is optional. It is off until AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_AUDIENCE are all set.")
-    if not _yes(read_line, "Set up Auth0 now? [y/N] "):
+    echo("Auth0 operator login is off until AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_AUDIENCE are all set.")
+    echo("")
+    if not _yes(read_line, "Set up Auth0 now? [Y/n] ", default=True):
         echo("")
+        echo("warning: Auth0 is necessary for the demo. Skipping it leaves operator login disabled.")
         echo("warning: Auth0 is not set up. Every command trusts the OS user.")
         echo("warning: there is no operator scope gate. Anyone who can run keyforge as this user can create, reveal, and delete keys.")
         echo("warning: turn it on later with `keyforge setup` after creating a Native app and an API in the Auth0 dashboard.")
@@ -182,20 +200,30 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
             os.environ[key] = value
         info = auth.status()
         echo("")
-        echo(_status_text(info))
         echo(f"saved: {path}")
         _marks(echo, 5)
         return {"kms_provider": choice, "auth": info, "env_file": str(path)}
 
     echo("")
+    echo("")
     echo("Auth0 dashboard (https://manage.auth0.com):")
-    echo("  AUTH0_DOMAIN     Settings → Domain. Hostname only, no https://")
-    echo("  AUTH0_CLIENT_ID  Applications → your Native app → Settings → Client ID")
-    echo("  AUTH0_AUDIENCE   Applications → APIs → your API → Settings → Identifier")
+    echo("")
+    for name, hint in (
+        ("AUTH0_DOMAIN", "Settings → Domain. Hostname only, no https://"),
+        ("AUTH0_CLIENT_ID", "Applications → your Native app → Settings → Client ID"),
+        ("AUTH0_AUDIENCE", "Applications → APIs → your API → Settings → Identifier"),
+    ):
+        echo(f"  {name}")
+        echo(f"    {hint}")
+        echo("")
     echo("Enable the Password grant (and Device Code if you still use `auth login`) on that Native app.")
+    echo("")
     echo("API Permissions: keys:read keys:write keys:verify reveal:secret")
+    echo("")
     domain = _ask(read_line, "AUTH0_DOMAIN: ")
+    echo("")
     client_id = _ask(read_line, "AUTH0_CLIENT_ID: ")
+    echo("")
     audience = _ask(read_line, "AUTH0_AUDIENCE [https://keyforge.local/api]: ") or "https://keyforge.local/api"
     if not domain or not client_id or not audience:
         raise AuthError("Auth0 requires AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_AUDIENCE")
@@ -208,36 +236,22 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         os.environ[key] = value
 
     echo("")
+    echo("")
     echo("Login. Username first, then password.")
+    echo("")
     echo("Username is the database user (User Management → Users), usually the email. It is not the Client ID.")
+    echo("")
     echo("Password is that user's password. It is not the Client Secret and it is not written to disk.")
+    echo("")
     username = _ask(read_line, "username: ")
+    echo("")
     password = read_secret("password: ")
     login = login or auth.password_login
     principal = login(username, password)
     path = _write_env(saved)
-    info = auth.status()
     echo("")
     echo(f"logged in as {principal.sub}")
-    echo(_status_text(info))
+    echo("")
     echo(f"saved: {path}")
     _marks(echo, 5)
-    return {"kms_provider": choice, "auth": info, "env_file": str(path), "sub": principal.sub}
-
-
-def _status_text(info: dict) -> str:
-    if not info.get("enabled"):
-        return "auth status: auth disabled"
-    if not info.get("logged_in"):
-        return f"auth status: not logged in: {info.get('reason')}"
-    scopes = " ".join(info.get("scopes") or []) or "-"
-    lines = [
-        "auth status:",
-        f"logged in as {info.get('sub')}",
-        f"scopes: {scopes}",
-        f"expires_at: {info.get('expires_at')}",
-    ]
-    missing = info.get("missing_scopes") or []
-    if missing:
-        lines.append("missing_scopes: " + " ".join(missing))
-    return "\n".join(lines)
+    return {"kms_provider": choice, "auth": {"logged_in": True, "sub": principal.sub}, "env_file": str(path), "sub": principal.sub}

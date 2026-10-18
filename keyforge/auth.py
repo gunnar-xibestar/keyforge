@@ -464,6 +464,13 @@ def password_login(username: str, password: str) -> Principal:
     if isinstance(desc, str) and password and password in desc:
         body = dict(body)
         body["error_description"] = desc.replace(password, "[redacted]")
+    if body.get("error") == "unauthorized_client":
+        raise AuthError(
+            "Auth0 rejected the password grant for this client. "
+            "On the Native app, enable Applications → Settings → Advanced Settings → Grant Types → Password, "
+            "then run keyforge setup again. "
+            "`keyforge auth login` uses the device-code grant instead."
+        )
     return _accept_token_response(body)
 
 
