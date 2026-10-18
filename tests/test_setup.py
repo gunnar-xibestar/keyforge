@@ -215,18 +215,24 @@ class SetupTests(unittest.TestCase):
         self.assertIn("Create a new token:", text)
         self.assertIn("removed 1 newer token", text)
 
-    def test_blank_pin_prints_softhsm_setup(self):
-        from keyforge.errors import KeyForgeError
-        answers = iter(["pkcs11", "", "/tmp/no-such-libsofthsm2.so", "keyforge"])
+    def test_blank_pin_asks_again(self):
+        answers = iter(["pkcs11", "", "/tmp/no-such-libsofthsm2.so", "keyforge", "keyforge-kek", "", "n"])
+        secrets = iter(["", "pin-secret"])
+        prompts = []
 
         def read_line(prompt):
+            prompts.append(prompt)
             return next(answers)
 
-        with self.assertRaises(KeyForgeError) as cm:
-            setup_mod.run(read_line=read_line, read_secret=lambda _p: "", echo=self._echo)
-        self.assertIn("--init-token --pin", str(cm.exception))
-        self.assertIn("not the SO PIN", str(cm.exception))
-        self.assertGreaterEqual("\n".join(self.lines).count("SoftHSM setup:"), 2)
+        def read_secret(prompt):
+            prompts.append(prompt)
+            return next(secrets)
+
+        setup_mod.run(read_line=read_line, read_secret=read_secret, echo=self._echo)
+        self.assertEqual(prompts.count("KEYFORGE_PKCS11_PIN: "), 2)
+        self.assertIn("input blank", self.lines)
+        self.assertEqual(self.lines.count("SoftHSM setup:"), 1)
+        self.assertIn("KEYFORGE_PKCS11_PIN=pin-secret", Path(self.env_file).read_text())
 
     def test_bare_keyforge_needs_a_command(self):
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:

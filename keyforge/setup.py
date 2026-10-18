@@ -205,14 +205,11 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         module = _ask(read_line, "KEYFORGE_PKCS11_MODULE [/usr/lib/softhsm/libsofthsm2.so]: ") or "/usr/lib/softhsm/libsofthsm2.so"
         token = _ask(read_line, "KEYFORGE_PKCS11_TOKEN [keyforge]: ") or "keyforge"
         echo("PIN is the token user PIN from softhsm2-util --init-token --pin, not the SO PIN.")
-        pin = read_secret("KEYFORGE_PKCS11_PIN: ")
-        if not pin:
-            for line in setup_instructions(no_token=not existing).splitlines():
-                echo(line)
-            raise KeyForgeError(
-                "KEYFORGE_PKCS11_PIN is required. It is the user PIN from "
-                "softhsm2-util --init-token --pin, not the SO PIN."
-            )
+        while True:
+            pin = read_secret("KEYFORGE_PKCS11_PIN: ")
+            if pin:
+                break
+            echo("input blank")
         label = _ask(read_line, "KEYFORGE_PKCS11_KEY_LABEL [keyforge-kek]: ") or "keyforge-kek"
         if reuse:
             echo("warning: reuse deletes newer SoftHSM tokens with this label and keeps the oldest. Secrets wrapped by a deleted token cannot be opened.")

@@ -364,11 +364,28 @@ class Pkcs11Kms:
         return self.token.unwrap(self.key_label, blob, aad)
 
 
+def read_user_pin(read_secret=None) -> str:
+    """Ask for the token user PIN. A blank entry prints ``input blank`` and asks again.
+
+    The value is kept in this process only. It is not written to ``keyforge.env``.
+    """
+    import getpass
+    read_secret = read_secret or getpass.getpass
+    while True:
+        pin = read_secret("KEYFORGE_PKCS11_PIN: ")
+        if pin:
+            os.environ["KEYFORGE_PKCS11_PIN"] = pin
+            return pin
+        print("input blank", file=sys.stderr)
+
+
 def pkcs11_from_env() -> Pkcs11Kms:
     module = os.environ.get("KEYFORGE_PKCS11_MODULE", "")
     token = os.environ.get("KEYFORGE_PKCS11_TOKEN", "")
     pin = os.environ.get("KEYFORGE_PKCS11_PIN", "")
     label = os.environ.get("KEYFORGE_PKCS11_KEY_LABEL", "")
+    if not pin and module and token and label and sys.stdin.isatty():
+        pin = read_user_pin()
     missing = [n for n, v in (("KEYFORGE_PKCS11_MODULE", module), ("KEYFORGE_PKCS11_TOKEN", token),
                               ("KEYFORGE_PKCS11_PIN", pin), ("KEYFORGE_PKCS11_KEY_LABEL", label)) if not v]
     if missing:
@@ -446,6 +463,9 @@ def status(store_path: str | None = None) -> dict:
         token = os.environ.get("KEYFORGE_PKCS11_TOKEN", "")
         label = os.environ.get("KEYFORGE_PKCS11_KEY_LABEL", "")
         pin_set = bool(os.environ.get("KEYFORGE_PKCS11_PIN", ""))
+        if not pin_set and module and token and label and sys.stdin.isatty():
+            read_user_pin()
+            pin_set = True
         try:
             import pkcs11  # noqa: F401
             binding = True
