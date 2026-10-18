@@ -189,11 +189,19 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
 
     echo("")
     echo("Auth0 dashboard (https://manage.auth0.com):")
-    echo("  AUTH0_DOMAIN     Settings → Domain. Hostname only, no https://")
-    echo("  AUTH0_CLIENT_ID  Applications → your Native app → Settings → Client ID")
-    echo("  AUTH0_AUDIENCE   Applications → APIs → your API → Settings → Identifier")
+    echo("")
+    for name, hint in (
+        ("AUTH0_DOMAIN", "Settings → Domain. Hostname only, no https://"),
+        ("AUTH0_CLIENT_ID", "Applications → your Native app → Settings → Client ID"),
+        ("AUTH0_AUDIENCE", "Applications → APIs → your API → Settings → Identifier"),
+    ):
+        echo(f"  {name}")
+        echo(f"    {hint}")
+        echo("")
     echo("Enable the Password grant (and Device Code if you still use `auth login`) on that Native app.")
+    echo("")
     echo("API Permissions: keys:read keys:write keys:verify reveal:secret")
+    echo("")
     domain = _ask(read_line, "AUTH0_DOMAIN: ")
     client_id = _ask(read_line, "AUTH0_CLIENT_ID: ")
     audience = _ask(read_line, "AUTH0_AUDIENCE [https://keyforge.local/api]: ") or "https://keyforge.local/api"
