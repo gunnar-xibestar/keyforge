@@ -202,7 +202,7 @@ curl -s http://127.0.0.1:8787/health
 ```
 
 ```json
-{ "ok": true, "service": "keyforge-demo", "version": "0.2.0" }
+{ "ok": true, "service": "keyforge-demo", "version": "0.3.0" }
 ```
 
 `/health` is open. This only proves the process is up.
