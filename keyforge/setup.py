@@ -10,6 +10,7 @@ from pathlib import Path
 
 from . import auth
 from .errors import AuthError, KeyForgeError
+from .softhsm import drop_newer_tokens, matching_tokens
 
 _PROVIDERS = ("local", "pkcs11", "memory")
 
@@ -166,6 +167,8 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
             saved["KEYFORGE_KMS_KEY_FILE"] = key_file
     elif choice == "pkcs11":
         echo("progress: SoftHSM token")
+        echo("")
+        echo("Create a new token:")
         echo("  mkdir -p \"$HOME/.keyforge/softhsm/tokens\"")
         echo("  printf 'directories.tokendir = %s\\nobjectstore.backend = file\\nlog.level = ERROR\\n' \\")
         echo("    \"$HOME/.keyforge/softhsm/tokens\" > \"$HOME/.keyforge/softhsm/softhsm2.conf\"")
@@ -175,7 +178,19 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         echo("The module is often /usr/lib/softhsm/libsofthsm2.so (dpkg -L softhsm2 | grep '\\.so$').")
         echo("A hardware token skips softhsm2-util and uses that vendor's .so instead.")
         echo("")
-        _ask(read_line, "Press Enter when the token exists: ")
+        default_conf = os.environ.get("SOFTHSM2_CONF") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
+        existing = matching_tokens("keyforge", default_conf)
+        if existing:
+            echo(f"Found {len(existing)} existing token(s) labeled 'keyforge'.")
+            echo(f"  oldest: {existing[0]}")
+            echo("Reuse keeps that oldest token. Newer tokens with the same label are deleted.")
+            echo("Create runs --init-token again, which adds another token with that label.")
+            reuse = _yes(read_line, "Reuse the oldest token? [Y/n] ", default=True)
+        else:
+            echo(f"No existing token labeled 'keyforge' in {default_conf}.")
+            reuse = False
+        if not reuse:
+            _ask(read_line, "Press Enter when the new token exists: ")
         echo("")
         module = _ask(read_line, "KEYFORGE_PKCS11_MODULE [/usr/lib/softhsm/libsofthsm2.so]: ") or "/usr/lib/softhsm/libsofthsm2.so"
         token = _ask(read_line, "KEYFORGE_PKCS11_TOKEN [keyforge]: ") or "keyforge"
@@ -184,8 +199,14 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         if not pin:
             raise KeyForgeError("KEYFORGE_PKCS11_PIN is required for pkcs11")
         label = _ask(read_line, "KEYFORGE_PKCS11_KEY_LABEL [keyforge-kek]: ") or "keyforge-kek"
+        if reuse:
+            echo("warning: reuse deletes newer SoftHSM tokens with this label and keeps the oldest. Secrets wrapped by a deleted token cannot be opened. Generating a missing AES key does not restore them.")
         create = "1" if _yes(read_line, "Generate the AES key on the token if it is missing? [y (less-secure) / N (strict)] ") else ""
-        conf = _ask(read_line, "SOFTHSM2_CONF [$HOME/.keyforge/softhsm/softhsm2.conf]: ") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
+        conf = _ask(read_line, f"SOFTHSM2_CONF [{default_conf}]: ") or default_conf
+        if reuse and "softhsm" in os.path.basename(module).lower():
+            removed = drop_newer_tokens(token, conf)
+            if removed:
+                echo(f"removed {len(removed)} newer token(s) labeled {token!r}; kept the oldest")
         saved.update({
             "KEYFORGE_PKCS11_MODULE": module,
             "KEYFORGE_PKCS11_TOKEN": token,

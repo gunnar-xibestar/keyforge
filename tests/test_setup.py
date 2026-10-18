@@ -126,8 +126,11 @@ class SetupTests(unittest.TestCase):
         self.assertNotIn("auth status", text)
         self.assertNotIn("scopes:", text)
         self.assertIn("softhsm2-util --init-token", text)
+        self.assertNotIn("Reuse the oldest token?", text)
         self.assertNotIn("another terminal", text)
-        self.assertLess(prompts.index("Press Enter when the token exists: "), prompts.index("KEYFORGE_PKCS11_MODULE [/usr/lib/softhsm/libsofthsm2.so]: "))
+        self.assertLess(prompts.index("Press Enter when the new token exists: "), prompts.index("KEYFORGE_PKCS11_MODULE [/usr/lib/softhsm/libsofthsm2.so]: "))
+        self.assertIn("No existing token labeled 'keyforge'", text)
+        self.assertIn("Create a new token:", text)
         self.assertIn("Applications → APIs", text)
         body = Path(self.env_file).read_text()
         self.assertIn("KEYFORGE_KMS_PROVIDER=pkcs11", body)
@@ -135,6 +138,49 @@ class SetupTests(unittest.TestCase):
         self.assertIn("pin-secret", body)
         self.assertNotIn("user-secret", body)
         self.assertEqual(result["sub"], "auth0|ada")
+
+    def test_reuse_keeps_oldest_token_and_skips_create_wait(self):
+        root = Path(self.d.name) / "tokens"
+        root.mkdir()
+        conf = Path(self.d.name) / "softhsm2.conf"
+        conf.write_text(f"directories.tokendir = {root}\n")
+        os.environ["SOFTHSM2_CONF"] = str(conf)
+
+        def write(name, mtime_ns):
+            path = root / name
+            path.mkdir()
+            obj = path / "token.object"
+            padded = b"keyforge" + b" " * (32 - len(b"keyforge"))
+            obj.write_bytes((32).to_bytes(8, "big") + padded)
+            os.utime(obj, ns=(mtime_ns, mtime_ns))
+            return path
+
+        oldest = write("old", 1_000)
+        newer = write("new", 2_000)
+        answers = iter([
+            "pkcs11",
+            "",
+            "/usr/lib/softhsm/libsofthsm2.so",
+            "keyforge",
+            "keyforge-kek",
+            "n",
+            "",
+            "n",
+        ])
+        prompts = []
+
+        def read_line(prompt):
+            prompts.append(prompt)
+            return next(answers)
+
+        setup_mod.run(read_line=read_line, read_secret=lambda _p: "pin-secret", echo=self._echo)
+        self.assertIn("Reuse the oldest token? [Y/n] ", prompts)
+        self.assertNotIn("Press Enter when the new token exists: ", prompts)
+        self.assertTrue(oldest.is_dir())
+        self.assertFalse(newer.exists())
+        text = "\n".join(self.lines)
+        self.assertIn("Create a new token:", text)
+        self.assertIn("removed 1 newer token", text)
 
     def test_bare_keyforge_needs_a_command(self):
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
