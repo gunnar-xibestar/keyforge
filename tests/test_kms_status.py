@@ -76,6 +76,15 @@ class KmsStatusTests(unittest.TestCase):
         self.assertIn("input blank", err.getvalue())
         self.assertEqual(os.environ["KEYFORGE_PKCS11_PIN"], "s3cret")
 
+    def test_missing_pin_without_a_terminal_prints_no_terminal_only(self):
+        os.environ["KEYFORGE_KMS_PROVIDER"] = "pkcs11"
+        os.environ["KEYFORGE_PKCS11_MODULE"] = __file__
+        os.environ["KEYFORGE_PKCS11_TOKEN"] = "keyforge"
+        os.environ["KEYFORGE_PKCS11_KEY_LABEL"] = "keyforge-kek"
+        with mock.patch("sys.stdin.isatty", return_value=False):
+            info = kms.status()
+        self.assertEqual(kms.format_status(info), ["no terminal"])
+
     def test_memory_ready(self):
         os.environ["KEYFORGE_KMS_PROVIDER"] = "memory"
         rc, out, err = _run("kms", "status")

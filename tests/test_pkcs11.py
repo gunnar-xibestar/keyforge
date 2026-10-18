@@ -1,6 +1,8 @@
 """PKCS#11 provider against SoftHSM when the module is installed, plus the documented env contract."""
-import os, shutil, subprocess, tempfile, unittest
+import io, os, shutil, subprocess, tempfile, unittest
+from contextlib import redirect_stderr
 from pathlib import Path
+from unittest import mock
 
 from keyforge import crypto, service as svc
 from keyforge.errors import KeyForgeError
@@ -80,6 +82,26 @@ class SoftHsmTests(unittest.TestCase):
         with self.assertRaises(KeyForgeError) as cm:
             crypto.open_secret(env, key_id=k.id, kms=provider_for(self.store))
         self.assertIn("authentication", str(cm.exception).lower())
+
+
+class PinAttemptTests(unittest.TestCase):
+    def test_third_wrong_pin_prints_mismatch_and_setup(self):
+        from keyforge.kms import _open_token
+        pins = iter(["second", "third"])
+
+        class Token:
+            def open(self, rw, user_pin):
+                raise type("PinIncorrect", (Exception,), {})("wrong")
+
+        err = io.StringIO()
+        with mock.patch("sys.stdin.isatty", return_value=True), redirect_stderr(err):
+            with self.assertRaises(KeyForgeError) as cm:
+                _open_token(Token(), "first", read_secret=lambda _p: next(pins))
+        self.assertEqual(str(cm.exception), "mismatch")
+        text = err.getvalue()
+        self.assertIn("mismatch\n", text)
+        self.assertIn("SoftHSM setup:", text)
+        self.assertIn("warning: that library runs inside KeyForge", text)
 
 
 class NewAesKeyNoticeTests(unittest.TestCase):
