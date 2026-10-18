@@ -136,6 +136,12 @@ class AuthTests(unittest.TestCase):
         self.assertIn(b"ada%40example.test", data)
         self.assertIn(b"password-realm", data)
         self.assertIn(b"s3cret-value", data)
+        self.opener.token_body = {"error": "unauthorized_client",
+                                  "error_description": "Grant type 'http://auth0.com/oauth/grant-type/password-realm' not allowed for the client."}
+        with self.assertRaises(AuthError) as denied:
+            auth.password_login("ada@example.test", "s3cret-value")
+        self.assertIn("Grant Types → Password", str(denied.exception))
+        self.assertNotIn("s3cret-value", str(denied.exception))
         self.opener.token_body = {"error": "invalid_grant", "error_description": "wrong s3cret-value"}
         with self.assertRaises(AuthError) as cm:
             auth.password_login("ada@example.test", "s3cret-value")
