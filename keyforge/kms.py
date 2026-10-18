@@ -393,6 +393,46 @@ def _open_token(token, pin: str, read_secret=None):
     raise KeyForgeError("mismatch error (pin failed after 3 attempts)")
 
 
+def list_aes_labels(module: str, token_label: str, pin: str) -> list[str] | None:
+    """AES key labels on the token. ``None`` when the token cannot be opened."""
+    try:
+        token = Pkcs11Token(module, token_label, pin, "keyforge-kek")
+        with token._session() as session:
+            from pkcs11 import Attribute, KeyType, ObjectClass
+            found = session.get_objects({
+                Attribute.CLASS: ObjectClass.SECRET_KEY,
+                Attribute.KEY_TYPE: KeyType.AES,
+            })
+            labels = []
+            for obj in found:
+                name = getattr(obj, "label", None) or ""
+                labels.append(name if isinstance(name, str) else str(name))
+            return labels
+    except KeyForgeError:
+        return None
+
+
+def destroy_aes_labels(module: str, token_label: str, pin: str, labels: list[str]) -> list[str]:
+    """Delete AES keys whose labels are in ``labels``. Returns the labels removed."""
+    wanted = set(labels)
+    removed: list[str] = []
+    token = Pkcs11Token(module, token_label, pin, "keyforge-kek")
+    with token._session() as session:
+        from pkcs11 import Attribute, KeyType, ObjectClass
+        found = list(session.get_objects({
+            Attribute.CLASS: ObjectClass.SECRET_KEY,
+            Attribute.KEY_TYPE: KeyType.AES,
+        }))
+        for obj in found:
+            name = getattr(obj, "label", None) or ""
+            if not isinstance(name, str):
+                name = str(name)
+            if name in wanted:
+                obj.destroy()
+                removed.append(name)
+    return removed
+
+
 def read_user_pin(read_secret=None) -> str:
     """Ask for the token user PIN. A blank entry prints ``input blank`` and asks again.
 
