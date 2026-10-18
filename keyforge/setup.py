@@ -6,12 +6,13 @@ password is never written there.
 """
 from __future__ import annotations
 import os, shlex, stat
+from datetime import datetime
 from pathlib import Path
 
 from . import auth
 from .errors import AuthError, KeyForgeError
 from .kms import format_status, status as kms_status
-from .softhsm import drop_newer_tokens, matching_tokens, setup_instructions
+from .softhsm import delete_token, matching_tokens, setup_instructions
 
 _PROVIDERS = ("local", "pkcs11", "memory")
 
@@ -145,6 +146,43 @@ def _echo_kms_status(echo, saved: dict[str, str]) -> None:
         echo(line)
 
 
+def _token_menu(read_line, echo, paths: list[str], conf: str) -> bool:
+    """Let the operator delete any token except the oldest. Return True to reuse main.
+
+    False means create another token. Tokens are oldest first.
+    """
+    remaining = list(paths)
+    while True:
+        echo(f"Found {len(remaining)} existing tokens labeled 'keyforge'.")
+        for i, path in enumerate(remaining, start=1):
+            obj = Path(path) / "token.object"
+            stamp = datetime.fromtimestamp(obj.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+            role = "main" if i == 1 else "other"
+            echo(f"  {i}. {role}  {stamp}  {path}")
+        echo("Reuse uses oldest token. (main)")
+        echo("Create runs --init-token again, which adds another token with a new label.")
+        echo("warning: each token uses a slot, and SoftHSM has a limited number of slots.")
+        choice = _ask(read_line, "Select a number to delete, c to create, or Enter to reuse main: ")
+        if not choice:
+            return True
+        if choice.lower() == "c":
+            return False
+        if choice == "1":
+            echo("The main token cannot be deleted.")
+            continue
+        if choice.isdigit() and 1 < int(choice) <= len(remaining):
+            target = remaining[int(choice) - 1]
+            removed = delete_token(target, conf, label="keyforge")
+            if removed:
+                echo(f"deleted {removed}")
+                remaining.pop(int(choice) - 1)
+            if len(remaining) == 1:
+                echo("Reuse uses oldest token. (main)")
+                return True
+            continue
+        echo("That number is not a token in this list.")
+
+
 def _yes(read_line, prompt: str, *, default: bool = False) -> bool:
     ans = _ask(read_line, prompt).lower()
     if not ans:
@@ -190,12 +228,13 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         for line in setup_instructions(no_token=not existing).splitlines():
             echo(line)
         echo("")
-        if existing:
-            echo(f"Found {len(existing)} existing token(s) labeled 'keyforge'.")
+        if len(existing) == 1:
+            echo("Found 1 existing token labeled 'keyforge'.")
             echo(f"  oldest: {existing[0]}")
-            echo("Reuse keeps that oldest token. Newer tokens with the same label are deleted.")
-            echo("Create runs --init-token again, which adds another token with that label.")
-            reuse = _yes(read_line, "Reuse the oldest token? [Y/n] ", default=True)
+            echo("Reuse uses oldest token. (main)")
+            reuse = True
+        elif existing:
+            reuse = _token_menu(read_line, echo, existing, default_conf)
         else:
             echo(f"No existing token labeled 'keyforge' in {default_conf}.")
             reuse = False
@@ -211,15 +250,9 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
                 break
             echo("input blank")
         label = _ask(read_line, "KEYFORGE_PKCS11_KEY_LABEL [keyforge-kek]: ") or "keyforge-kek"
-        if reuse:
-            echo("warning: reuse deletes newer SoftHSM tokens with this label and keeps the oldest. Secrets wrapped by a deleted token cannot be opened.")
         echo("A missing AES key is generated on the token the first time it is used.")
         echo("warning: a new key cannot read secrets wrapped by an older key. The label is only a name. The old key material is not in the new key.")
         conf = _ask(read_line, f"SOFTHSM2_CONF [{default_conf}]: ") or default_conf
-        if reuse and "softhsm" in os.path.basename(module).lower():
-            removed = drop_newer_tokens(token, conf)
-            if removed:
-                echo(f"removed {len(removed)} newer token(s) labeled {token!r}; kept the oldest")
         saved.update({
             "KEYFORGE_PKCS11_MODULE": module,
             "KEYFORGE_PKCS11_TOKEN": token,

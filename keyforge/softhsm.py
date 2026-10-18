@@ -126,6 +126,19 @@ def matching_tokens(label: str, conf_path: str | None) -> list[str]:
     return [path for _, path in matches]
 
 
+def delete_token(path: str, conf_path: str | None, *, label: str) -> str | None:
+    """Delete one token directory. The oldest match is main and is refused."""
+    matches = matching_tokens(label, conf_path)
+    if len(matches) < 2 or path not in matches or path == matches[0]:
+        return None
+    root = tokendir(conf_path)
+    target = Path(path)
+    if root is None or target.is_symlink() or not _inside(root, target):
+        return None
+    shutil.rmtree(target)
+    return path
+
+
 def drop_newer_tokens(label: str, conf_path: str | None) -> list[str]:
     """Delete newer SoftHSM token directories with ``label``. Keep the oldest.
 
