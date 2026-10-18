@@ -49,7 +49,7 @@ The screen prints where each value comes from, then asks:
 KEYFORGE_KMS_PROVIDER [local]:
 ```
 
-Setup records the answer. Auth0 `auth login` / `auth status` do **not** use the KMS — only `create`, `rotate`, and `reveal` (and envelope import) do. After setup, check the active provider with `keyforge kms status`.
+Setup records the answer and prints `keyforge kms status` before Auth0. `result: success` means that provider is ready; `result: failure` prints the error and setup continues. Auth0 `auth login` / `auth status` do **not** use the KMS — only `create`, `rotate`, and `reveal` (and envelope import) do.
 
 | provider | what wraps the data key |
 |---|---|

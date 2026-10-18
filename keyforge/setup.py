@@ -10,6 +10,7 @@ from pathlib import Path
 
 from . import auth
 from .errors import AuthError, KeyForgeError
+from .kms import format_status, status as kms_status
 from .softhsm import drop_newer_tokens, matching_tokens
 
 _PROVIDERS = ("local", "pkcs11", "memory")
@@ -126,6 +127,24 @@ def _ask(read_line, prompt: str) -> str:
     return read_line(prompt).strip()
 
 
+def _echo_kms_status(echo, saved: dict[str, str]) -> None:
+    """Print ``keyforge kms status`` for the provider just configured. Does not abort setup."""
+    previous = {key: os.environ.get(key) for key in saved}
+    os.environ.update(saved)
+    try:
+        lines = format_status(kms_status())
+    finally:
+        for key, old in previous.items():
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
+    echo("")
+    echo("kms status")
+    for line in lines:
+        echo(line)
+
+
 def _yes(read_line, prompt: str, *, default: bool = False) -> bool:
     ans = _ask(read_line, prompt).lower()
     if not ans:
@@ -216,6 +235,8 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         })
         if create:
             saved["KEYFORGE_PKCS11_CREATE_KEY"] = create
+
+    _echo_kms_status(echo, saved)
 
     echo("")
     echo("progress: Auth0")
