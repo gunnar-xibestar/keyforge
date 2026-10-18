@@ -33,44 +33,44 @@ If either is missing, the first PKCS#11 operation fails with install hints. Soft
 
 Store: `--store PATH`, `$KEYFORGE_STORE`, or `~/.keyforge/store.json`. Writes are atomic, mode 0600, under an exclusive lock.
 
-Without Auth0 configured, you are done — every command trusts the OS user.
+`keyforge` with no command exits with a usage error. Configuration is `keyforge setup` (below). Without Auth0, every command trusts the OS user.
 
-`keyforge setup` is the boot prompt. `keyforge` with no command exits with a usage error. Setup asks for `KEYFORGE_KMS_PROVIDER` and prints where each value comes from, then asks whether to set up Auth0. Skipping Auth0 prints the restriction: the OS user is trusted and there is no operator scope gate. Continuing asks for the three variables below (with dashboard locations), then a username and a password, in that order, and prints `auth status`. The password is not saved. Other values are written to `~/.keyforge/keyforge.env` (mode 0600). Later commands load that file when a variable is unset; `source ~/.keyforge/keyforge.env` exports them into your shell. `auth login` remains the device-code flow.
+### 2. `keyforge setup`
 
-### 2. Optional Auth0 login (for demo)
+`keyforge setup` is the boot prompt. It is interactive and refuses a non-interactive stdin. It writes the answers, except the Auth0 password, to `~/.keyforge/keyforge.env` (mode 0600). Later commands load that file when a variable is unset. `source ~/.keyforge/keyforge.env` exports them into your shell.
 
-Auth0 is **off** until all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE` are set. Setting only some of them is an error.
+**KMS provider.** The prompt prints where each value comes from, then asks for `KEYFORGE_KMS_PROVIDER`. Export it; a bare assignment is not visible to `keyforge`. What each provider wraps is in [KMS](#kms).
 
-**In the Auth0 dashboard**
+| entry | what setup tells you |
+|---|---|
+| `local` | Software KEK, mode 0600. Blank `KEYFORGE_KMS_KEY_FILE` uses `<store-dir>/kms-master.key` (default `~/.keyforge/kms-master.key`, next to `~/.keyforge/store.json`). Anyone who can read that file and the store can reveal secrets. A path outside the store directory is a separate permission boundary. |
+| `pkcs11` | Wrapping key stays on the token. Module: `KEYFORGE_PKCS11_MODULE` (SoftHSM is often `/usr/lib/softhsm/libsofthsm2.so`, `dpkg -L softhsm2`). Token label: `softhsm2-util --show-slots`. User PIN from `--init-token --pin`, not the SO PIN. Key label: `KEYFORGE_PKCS11_KEY_LABEL`. `SOFTHSM2_CONF` points at the conf whose tokendir you created. Full first-time SoftHSM commands: [PKCS#11](#pkcs11). |
+| `memory` | Replaces `pkcs11` and `local` for unit tests. In-process only (`KEYFORGE_KMS_MEMORY_KEY` may pin 64 hex chars). Useless after the process exits. |
 
-1. Create an API whose **Identifier** is the audience you will put in `AUTH0_AUDIENCE` (for example `https://keyforge.local/api`).
-2. Create a **Native** application (device-code friendly). Copy its **Client ID**.
-3. Enable the **Device Code** grant for that application.
-4. Authorize the application for the API. Add these API scopes (Auth0 → APIs → your API → Permissions):  
-   `keys:read`, `keys:write`, `keys:verify`, `reveal:secret`  
-   These are **operator** scopes for the CLI. They are not `kf_...` API-key scopes such as `read:packets`.
-5. Turn **off** “Add Permissions in the Access Token” (KeyForge reads a short `scope` claim only; see [Token diet](#token-diet)). If **Enable RBAC** is on, also assign those permissions to the Auth0 user (or role) that will run device login — Auth0 only puts granted permissions into `scope`.
+**Auth0.** Setup then asks whether to configure Auth0. Skipping it warns that every command trusts the OS user and there is no operator scope gate. Auth0 stays **off** until `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE` are all set. Setting only some of them is an error.
+
+Do this in the Auth0 dashboard before answering yes:
+
+1. Create an API whose **Identifier** is the audience (for example `https://keyforge.local/api`).
+2. Create a **Native** application. Copy its **Client ID**.
+3. Enable the **Password** grant for `keyforge setup`, and the **Device Code** grant if you will also use `auth login`.
+4. Authorize the application for the API. Add these API scopes (Auth0 → APIs → your API → Permissions): `keys:read`, `keys:write`, `keys:verify`, `reveal:secret`. These are **operator** scopes for the CLI. They are not `kf_...` API-key scopes such as `read:packets`.
+5. Turn **off** “Add Permissions in the Access Token” (KeyForge reads a short `scope` claim only; see [Token diet](#token-diet)). If **Enable RBAC** is on, also assign those permissions to the Auth0 user (or role) — Auth0 only puts granted permissions into `scope`.
 6. Under Applications → your Native app → APIs, authorize the app for that API and allow the same permissions.
 
-**On your machine**
+Answering yes prompts for the same three variables, with those dashboard locations on screen:
 
 ```
-# prerequisites for using 'auth login'
-export AUTH0_DOMAIN=your-tenant.us.auth0.com    # hostname only, no https://
-export AUTH0_CLIENT_ID=your_native_app_client_id
-export AUTH0_AUDIENCE=https://keyforge.local/api
-# optional:
-# export AUTH0_SCOPES='keys:read keys:write keys:verify reveal:secret offline_access'
-
-keyforge auth login
-keyforge auth status
+export AUTH0_DOMAIN=your-tenant.us.auth0.com    # Settings → Domain. Hostname only, no https://
+export AUTH0_CLIENT_ID=your_native_app_client_id # Applications → Native app → Settings → Client ID
+export AUTH0_AUDIENCE=https://keyforge.local/api # Applications → APIs → Identifier
 ```
 
-`auth login` prints a URL and a short code. Open the URL, enter the code, approve. KeyForge polls Auth0, then stores a lean access token (and refresh token when issued) in `KEYFORGE_TOKEN_FILE` or `~/.keyforge/tokens.json` (mode 0600). `auth status` shows the principal and scopes — never the token. `auth logout` deletes the file.
+It then asks for the username (User Management → Users, usually the email, not the Client ID) and the password, in that order. The password is sent with Auth0's password-realm grant and is not written to disk. The default realm is `Username-Password-Authentication` (`AUTH0_REALM` overrides it). Setup finishes by printing `auth status`: principal, scopes, and `missing_scopes`. It never prints the token.
 
-Auth0 returns the **intersection** of what KeyForge requested (`AUTH0_SCOPES` or the default set) and what the tenant actually grants. Permission names must match exactly (trailing spaces in Auth0 will silently drop a scope). If `auth status` shows only `keys:read` and `offline_access`, the other permissions are missing in the Auth0 API, app grant, or user assignment — KeyForge is not dropping them. Login and status print `missing_scopes` when that happens.
+`auth login` is still the device-code flow: a URL and a short code, then a lean access token (and refresh token when issued) in `KEYFORGE_TOKEN_FILE` or `~/.keyforge/tokens.json` (mode 0600). `auth logout` deletes that file. Optional `AUTH0_SCOPES` overrides the requested scope string.
 
-Until you log in, gated commands fail. After login, each command needs the matching Auth0 scope (see [Auth0](#auth0)). API-key secrets are never sent to Auth0.
+Auth0 returns the **intersection** of what KeyForge requested and what the tenant grants. Permission names must match exactly (trailing spaces in Auth0 silently drop a scope). If `auth status` shows only `keys:read` and `offline_access`, the other permissions are missing in the API, the app grant, or the user assignment. Until you log in, gated commands fail. After login, each command needs the matching scope (see [Auth0](#auth0)). API-key secrets are never sent to Auth0.
 
 Full variable list: [Environment](#environment). Access-token size rules: [Token diet](#token-diet).
 
@@ -158,7 +158,7 @@ There is no AWS or GCP provider. Those credentials are not part of this tool.
 
 ## Auth0
 
-Setup and first login are under [Install → Optional Auth0 login](#2-optional-auth0-login-for-demo). This section is the runtime contract once Auth0 is enabled.
+Setup and first login are under [Install → `keyforge setup`](#2-keyforge-setup). This section is the runtime contract once Auth0 is enabled.
 
 Default scopes requested at login (override with `AUTH0_SCOPES`):
 
