@@ -23,6 +23,9 @@ ROUTES = {
     # Failure demo: client attempts to create a secret. Requires API-key scope keys:write.
     # The walkthrough key only has read:packets, so POST /keys returns 403. Does not mint a key.
     "/keys": {"POST": ("keys:write",)},
+    # Success + redact demo: requires read:packets (walkthrough key gets 200) but omits verify
+    # output (hash dump, envelope, verified flag). Stronger scope would be needed for those fields.
+    "/verify": {"GET": ("read:packets",)},
 }
 
 
@@ -64,6 +67,27 @@ def dispatch(store_path: str, method: str, path: str, authorization: str | None,
             key = svc.verify(st, secret, scope=scope, ip=ip)
         except VerifyFailed as e:
             return 403, {"error": str(e)}
+        if route == "/verify":
+            # 200: key is valid for the route. Verify-sensitive fields stay out of the body —
+            # read:packets authorizes the call, not a full verify dump (needs a stronger scope).
+            return 200, {
+                "ok": True,
+                "route": route,
+                "required_scope": scope,
+                "key": {
+                    "id": key.id,
+                    "name": key.name,
+                    "prefix": key.prefix,
+                    "env": key.env,
+                    "owner": key.owner,
+                    "scopes": key.scopes,
+                    "status": key.effective_status(),
+                },
+                "note": (
+                    "verify output withheld without a stronger permission "
+                    "(e.g. API-key scope keys:verify)"
+                ),
+            }
         body = {"ok": True, "route": route, "key": {
             "id": key.id, "name": key.name, "prefix": key.prefix, "env": key.env,
             "owner": key.owner, "scopes": key.scopes, "status": key.effective_status(),
@@ -117,7 +141,8 @@ def serve(store_path: str, host: str = "127.0.0.1", port: int = 8787) -> int:
     print(f"{BANNER}")
     print(f"demo server listening on http://{host}:{port}")
     print("routes: GET /health (open), GET /whoami (any key), GET /packets (scope read:packets),")
-    print("        GET /admin (scope write:packets), POST /keys (scope keys:write; failure demo)")
+    print("        GET /admin (scope write:packets), POST /keys (scope keys:write; failure demo),")
+    print("        GET /verify (scope read:packets; verify output redacted)")
     print("auth:   Authorization: Bearer <kf_... secret>")
     try:
         httpd.serve_forever()

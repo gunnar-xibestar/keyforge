@@ -99,6 +99,30 @@ class DispatchTests(_ServerFixture):
         self.assertEqual(status, 403)
         self.assertEqual(body["error"], "missing scope 'keys:write'")
 
+    def test_verify_accepts_demo_key_without_verify_output(self):
+        status, body = server.dispatch(
+            self.path, "GET", "/verify", None, "127.0.0.1")
+        self.assertEqual(status, 401)
+        status, body = server.dispatch(
+            self.path, "GET", "/verify", f"Bearer {self.other}", "127.0.0.1")
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"], "missing scope 'read:packets'")
+        status, body = server.dispatch(
+            self.path, "GET", "/verify", f"Bearer {self.secret}", "127.0.0.1")
+        self.assertEqual(status, 200, body)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["route"], "/verify")
+        self.assertEqual(body["required_scope"], "read:packets")
+        self.assertEqual(body["key"]["name"], "demo")
+        self.assertIn("note", body)
+        self.assertIn("withheld", body["note"])
+        for sensitive in (
+            "verified", "hash", "envelope", "secret", "algo", "salt",
+            "iterations", "mac", "prev_hash",
+        ):
+            self.assertNotIn(sensitive, body)
+            self.assertNotIn(sensitive, body["key"])
+
     def test_bad_secret(self):
         status, body = server.dispatch(
             self.path, "GET", "/whoami", "Bearer kf_test_nope1234567890123456789012", "127.0.0.1")
