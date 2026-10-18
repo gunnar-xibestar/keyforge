@@ -398,8 +398,14 @@ Legacy events (indices below `legacy`) are counted and skipped: they are not has
 Setup also repairs and hardens when it can:
 
 1. If `audit_meta` is absent and the log has no hashed events, setup runs the same path as `audit --adopt-legacy`, then says those legacy events cannot be checked for tampering.
-2. If `KEYFORGE_AUDIT_HMAC_KEY_FILE` is unset, setup creates `<store-dir>/audit-hmac.key` (32 random bytes, mode 0600), saves that path into `keyforge.env`, and prints `audit HMAC key created: …`.
+2. If `KEYFORGE_AUDIT_HMAC_KEY_FILE` is unset, setup creates `<store-dir>/audit-hmac.key` (32 random bytes, mode 0600), saves that path into `keyforge.env`, and prints `audit HMAC key created: …`. If the file already exists, it prints `audit HMAC key found: …`.
 3. The first time a usable key is present and metadata has no `mac` yet, setup writes one `audit_hmac_enabled` event so the MAC starts at that event. Events before it stay without a MAC.
+
+After the check, setup reports HMAC status:
+
+- If a valid chain and a matching HMAC secret were already in place, it prints `HMAC: on, verified, working` with the secret path and chain details (`chained` count, `count`, `head`). `audit --verify` will check both the hash chain and the HMAC tags.
+- If setup just created the key (or is enabling MAC for the first time), it prints `HMAC: on and verified for new events`, then warns that without that key `audit --verify` only checks the unkeyed hash chain — anyone who can write the store can recompute `prev_hash` and `hash`, and verify still passes.
+- If no usable HMAC secret is found, it warns that HMAC is not verifying the chain and that you lose keyed tamper evidence until `KEYFORGE_AUDIT_HMAC_KEY_FILE` points at a usable secret.
 
 ### Adopting a pre-chain store
 

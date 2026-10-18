@@ -75,12 +75,52 @@ class SetupTests(unittest.TestCase):
         self.assertIn("KEYFORGE_KMS_PROVIDER=local", body)
         self.assertIn("audit chain OK:", text)
         self.assertIn("MAC verified", text)
+        self.assertIn("audit HMAC key created:", text)
+        self.assertIn("HMAC: on and verified for new events", text)
+        self.assertIn("warning: a new HMAC key was created for this setup.", text)
+        self.assertIn("Without that key, audit --verify only checks the unkeyed hash chain.", text)
         self.assertIn("KEYFORGE_AUDIT_HMAC_KEY_FILE=", body)
         self.assertTrue(os.path.isfile(os.path.join(self.d.name, "audit-hmac.key")))
         self.assertNotIn("AUTH0_DOMAIN", body)
         self.assertNotIn("password=", body.lower())
         self.assertEqual(stat.S_IMODE(os.stat(self.env_file).st_mode), 0o600)
         self.assertEqual(os.environ["KEYFORGE_KMS_PROVIDER"], "local")
+
+    def test_setup_reports_hmac_on_when_chain_and_secret_match(self):
+        answers = iter(["local", "", "n"])
+
+        def read_line(prompt):
+            return next(answers)
+
+        setup_mod.run(read_line=read_line, read_secret=lambda _p: "", echo=self._echo)
+        self.lines.clear()
+        answers = iter(["local", "", "n"])
+        setup_mod.run(read_line=read_line, read_secret=lambda _p: "", echo=self._echo)
+        text = "\n".join(self.lines)
+        self.assertIn("audit HMAC key found:", text)
+        self.assertIn("HMAC: on, verified, working", text)
+        self.assertIn("audit --verify will check both the hash chain and the HMAC tags.", text)
+        self.assertIn("  secret:", text)
+        self.assertIn("  chain:", text)
+        self.assertNotIn("warning: a new HMAC key was created", text)
+        self.assertNotIn("warning: HMAC is not verifying", text)
+
+    def test_setup_warns_when_hmac_secret_is_unusable(self):
+        bad = os.path.join(self.d.name, "missing-hmac.key")
+        os.environ["KEYFORGE_AUDIT_HMAC_KEY_FILE"] = bad
+        Path(bad).write_bytes(b"short")
+        os.chmod(bad, 0o600)
+        answers = iter(["local", "", "n"])
+
+        def read_line(prompt):
+            return next(answers)
+
+        setup_mod.run(read_line=read_line, read_secret=lambda _p: "", echo=self._echo)
+        text = "\n".join(self.lines)
+        self.assertIn("audit HMAC key is unusable:", text)
+        self.assertIn("warning: HMAC is not verifying the audit chain.", text)
+        self.assertIn("Without HMAC, audit --verify only checks the unkeyed hash chain.", text)
+        self.assertIn("You lose keyed tamper evidence until KEYFORGE_AUDIT_HMAC_KEY_FILE points at a usable secret.", text)
 
     def test_saved_auth0_skips_the_setup_question(self):
         os.environ["AUTH0_DOMAIN"] = "tenant.example.test"

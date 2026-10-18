@@ -241,6 +241,8 @@ def _audit_chain(echo, saved: dict) -> None:
     echo("")
     echo("audit chain")
     echo(f"store: {path}")
+    key_created = False
+    hmac_was_enabled = False
     with Store(path) as st:
         if st.data.get("audit_meta") is None:
             echo("audit metadata is absent.")
@@ -267,15 +269,17 @@ def _audit_chain(echo, saved: dict) -> None:
                 os.write(fd, secrets.token_bytes(32))
             finally:
                 os.close(fd)
+            key_created = True
             echo(f"audit HMAC key created: {key_file}")
         else:
-            echo(f"audit HMAC key: {key_file}")
+            echo(f"audit HMAC key found: {key_file}")
         try:
             key = audit.hmac_key()
         except KeyForgeError as e:
             echo(f"audit HMAC key is unusable: {e}")
             key = None
         meta = st.data.get("audit_meta") or {}
+        hmac_was_enabled = bool(meta.get("mac"))
         if key and meta and "mac" not in meta:
             audit.record(st, "audit_hmac_enabled")
             st.save()
@@ -291,11 +295,35 @@ def _audit_chain(echo, saved: dict) -> None:
             echo(f"{r['legacy']} legacy event(s) have no hash. Tampering with those events is not detected.")
     else:
         echo(f"AUDIT CHAIN BROKEN: {r['error']}")
-    if key:
+    found_working = bool(key and r["ok"] and r["mac_verified"] and not key_created and hmac_was_enabled)
+    if found_working:
+        echo("HMAC: on, verified, working")
+        echo(f"  secret: {key_file}")
+        echo(f"  chain: {r['checked']} chained event(s), count {r['count']}, head {r['head']}")
+        if r["legacy"]:
+            echo(f"  legacy: {r['legacy']} event(s) have no hash or MAC")
+        echo("  audit --verify will check both the hash chain and the HMAC tags.")
         echo("The MAC detects a rewritten store only when the writer cannot read the HMAC key file.")
-        echo("This file is next to the store. Anyone who can read that directory can forge a chain that still verifies.")
+        if os.path.dirname(os.path.abspath(key_file)) == os.path.abspath(path.parent):
+            echo("This file is next to the store. Anyone who can read that directory can forge a chain that still verifies.")
+    elif key and r["ok"] and r["mac_verified"]:
+        echo("HMAC: on and verified for new events")
+        echo(f"  secret: {key_file}")
+        echo(f"  chain: {r['checked']} chained event(s), count {r['count']}, head {r['head']}")
+        if key_created:
+            echo("warning: a new HMAC key was created for this setup.")
+            echo("Without that key, audit --verify only checks the unkeyed hash chain.")
+            echo("Anyone who can write the store can recompute prev_hash and hash, and audit --verify still passes.")
+        echo("The MAC detects a rewritten store only when the writer cannot read the HMAC key file.")
+        if os.path.dirname(os.path.abspath(key_file)) == os.path.abspath(path.parent):
+            echo("This file is next to the store. Anyone who can read that directory can forge a chain that still verifies.")
     else:
-        echo("The chain is unkeyed. Anyone who can write the store can recompute prev_hash and hash, and audit --verify still passes.")
+        echo("warning: HMAC is not verifying the audit chain.")
+        if not key:
+            echo("No usable HMAC secret was found.")
+        echo("Without HMAC, audit --verify only checks the unkeyed hash chain.")
+        echo("Anyone who can write the store can recompute prev_hash and hash, and audit --verify still passes.")
+        echo("You lose keyed tamper evidence until KEYFORGE_AUDIT_HMAC_KEY_FILE points at a usable secret.")
 
 
 def run(*, read_line, read_secret, echo, login=None) -> dict:
