@@ -39,13 +39,14 @@ def setup_instructions(*, no_token: bool = False) -> str:
             "Create one with the commands above."
         )
     groups.append("\n".join((
-        "The module is often /usr/lib/softhsm/libsofthsm2.so.",
-        "dpkg -L softhsm2 | grep '\\.so$' prints that library on Debian or Ubuntu when it was installed somewhere else, often under /usr/lib/x86_64-linux-gnu/softhsm/.",
+        "The module is often /usr/lib/softhsm/libsofthsm2.so (dpkg -L softhsm2 | grep '\\.so$').",
+        "That file is the PKCS#11 library KeyForge loads.",
     )))
-    groups.append(
+    groups.append("\n".join((
         "A hardware token skips softhsm2-util and uses that vendor's .so instead. "
-        "That device is not SoftHSM. Point KEYFORGE_PKCS11_MODULE at the library the vendor shipped."
-    )
+        "That device is not SoftHSM. Point KEYFORGE_PKCS11_MODULE at the library the vendor shipped.",
+        "warning: that library runs inside KeyForge. It sees the user PIN and every data key that is wrapped.",
+    )))
     return "\n\n".join(groups)
 
 
