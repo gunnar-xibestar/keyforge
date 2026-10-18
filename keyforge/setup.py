@@ -184,7 +184,8 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         if not pin:
             raise KeyForgeError("KEYFORGE_PKCS11_PIN is required for pkcs11")
         label = _ask(read_line, "KEYFORGE_PKCS11_KEY_LABEL [keyforge-kek]: ") or "keyforge-kek"
-        create = "1" if _yes(read_line, "Generate the AES key on the token if it is missing? [y (less-secure) / N (strict)] ") else ""
+        echo("warning: if more than one SoftHSM token uses this label, KeyForge deletes the newer token directories and keeps the oldest. Secrets wrapped by a deleted token cannot be opened. Generating a missing AES key does not restore them.")
+        create = "1" if _yes(read_line, "Generate the AES key on the token if it is missing? [y (less-secure) / N (strict)] warning: newer duplicate tokens are deleted; the oldest is kept: ") else ""
         conf = _ask(read_line, "SOFTHSM2_CONF [$HOME/.keyforge/softhsm/softhsm2.conf]: ") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
         saved.update({
             "KEYFORGE_PKCS11_MODULE": module,

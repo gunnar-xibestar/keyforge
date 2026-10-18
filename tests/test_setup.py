@@ -126,6 +126,8 @@ class SetupTests(unittest.TestCase):
         self.assertNotIn("auth status", text)
         self.assertNotIn("scopes:", text)
         self.assertIn("softhsm2-util --init-token", text)
+        self.assertIn("deletes the newer token directories and keeps the oldest", text)
+        self.assertIn("newer duplicate tokens are deleted; the oldest is kept", "\n".join(prompts))
         self.assertNotIn("another terminal", text)
         self.assertLess(prompts.index("Press Enter when the token exists: "), prompts.index("KEYFORGE_PKCS11_MODULE [/usr/lib/softhsm/libsofthsm2.so]: "))
         self.assertIn("Applications → APIs", text)
