@@ -219,6 +219,29 @@ class SetupTests(unittest.TestCase):
         self.assertIn("a new label", text)
         self.assertIn("limited number of slots", text)
 
+    def test_existing_keyforge_kek_skips_the_label_prompt(self):
+        answers = iter(["pkcs11", "", "/tmp/no-such-libsofthsm2.so", "", "", "", "n"])
+        prompts = []
+
+        def read_line(prompt):
+            prompts.append(prompt)
+            return next(answers)
+
+        def labels(module, token_label, pin):
+            return ["keyforge-kek"]
+
+        real = setup_mod.list_aes_labels
+        setup_mod.list_aes_labels = labels
+        try:
+            setup_mod.run(read_line=read_line, read_secret=lambda _p: "pin-secret", echo=self._echo)
+        finally:
+            setup_mod.list_aes_labels = real
+        text = "\n".join(self.lines)
+        self.assertNotIn("KEYFORGE_PKCS11_KEY_LABEL [keyforge-kek]: ", prompts)
+        self.assertIn("Key label: keyforge-kek", self.lines)
+        self.assertIn("1. keyforge-kek (cannot be deleted)", text)
+        self.assertNotIn("The new key label you just entered will only be a name.", text)
+
     def test_aes_menu_cannot_delete_keyforge_kek(self):
         deleted = []
         answers = iter(["1", "2", ""])
