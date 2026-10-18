@@ -371,7 +371,7 @@ def _pin_mismatch(exc: BaseException) -> bool:
 def _report_pin_mismatch() -> None:
     from .softhsm import matching_tokens, setup_instructions
     conf = os.environ.get("SOFTHSM2_CONF") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
-    print("mismatch\n\nerror", file=sys.stderr)
+    print("mismatch error (pin failed after 3 attempts)\n", file=sys.stderr)
     print(setup_instructions(no_token=not matching_tokens("keyforge", conf)), file=sys.stderr)
 
 
@@ -386,11 +386,11 @@ def _open_token(token, pin: str, read_secret=None):
                 raise
             if attempt == 3:
                 _report_pin_mismatch()
-                raise KeyForgeError("mismatch") from None
+                raise KeyForgeError("mismatch error (pin failed after 3 attempts)") from None
             if not sys.stdin.isatty():
                 raise KeyForgeError("no terminal") from None
             current = read_user_pin(read_secret)
-    raise KeyForgeError("mismatch")
+    raise KeyForgeError("mismatch error (pin failed after 3 attempts)")
 
 
 def read_user_pin(read_secret=None) -> str:

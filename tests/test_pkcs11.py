@@ -97,9 +97,9 @@ class PinAttemptTests(unittest.TestCase):
         with mock.patch("sys.stdin.isatty", return_value=True), redirect_stderr(err):
             with self.assertRaises(KeyForgeError) as cm:
                 _open_token(Token(), "first", read_secret=lambda _p: next(pins))
-        self.assertEqual(str(cm.exception), "mismatch")
+        self.assertEqual(str(cm.exception), "mismatch error (pin failed after 3 attempts)")
         text = err.getvalue()
-        self.assertIn("mismatch\n\nerror\nSoftHSM setup:", text)
+        self.assertIn("mismatch error (pin failed after 3 attempts)\n\nSoftHSM setup:", text)
         self.assertIn("warning: that library runs inside KeyForge", text)
 
 
