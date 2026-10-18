@@ -184,12 +184,12 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         if key_file:
             saved["KEYFORGE_KMS_KEY_FILE"] = key_file
     elif choice == "pkcs11":
-        echo("Create a new token:")
-        for line in setup_instructions().splitlines():
-            echo(line)
-        echo("")
         default_conf = os.environ.get("SOFTHSM2_CONF") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
         existing = matching_tokens("keyforge", default_conf)
+        echo("Create a new token:")
+        for line in setup_instructions(no_token=not existing).splitlines():
+            echo(line)
+        echo("")
         if existing:
             echo(f"Found {len(existing)} existing token(s) labeled 'keyforge'.")
             echo(f"  oldest: {existing[0]}")
@@ -207,7 +207,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         echo("PIN is the token user PIN from softhsm2-util --init-token --pin, not the SO PIN.")
         pin = read_secret("KEYFORGE_PKCS11_PIN: ")
         if not pin:
-            for line in setup_instructions().splitlines():
+            for line in setup_instructions(no_token=not existing).splitlines():
                 echo(line)
             raise KeyForgeError(
                 "KEYFORGE_PKCS11_PIN is required. It is the user PIN from "

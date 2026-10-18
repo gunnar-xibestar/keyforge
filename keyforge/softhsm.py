@@ -13,24 +13,41 @@ from pathlib import Path
 from .errors import KeyForgeError
 
 
-def setup_instructions() -> str:
+def setup_instructions(*, no_token: bool = False) -> str:
     """Commands that create a SoftHSM token and its user PIN.
 
     The SO PIN is only for ``--so-pin``. KeyForge stores the user PIN.
+    ``no_token`` adds the note that the label check found nothing.
     """
-    return "\n".join((
-        "SoftHSM setup:",
-        "  mkdir -p \"$HOME/.keyforge/softhsm/tokens\"",
-        "  printf 'directories.tokendir = %s\\nobjectstore.backend = file\\nlog.level = ERROR\\n' \\",
-        "    \"$HOME/.keyforge/softhsm/tokens\" > \"$HOME/.keyforge/softhsm/softhsm2.conf\"",
-        "  SOFTHSM2_CONF=\"$HOME/.keyforge/softhsm/softhsm2.conf\" \\",
-        "    softhsm2-util --init-token --free --label keyforge --pin \"$PIN\" --so-pin \"$SO_PIN\"",
-        "",
-        "PIN is the user PIN from --init-token --pin. Enter that as KEYFORGE_PKCS11_PIN.",
-        "The SO PIN is only for --so-pin. It is not saved.",
+    groups = [
+        "\n".join((
+            "SoftHSM setup:",
+            "  mkdir -p \"$HOME/.keyforge/softhsm/tokens\"",
+            "  printf 'directories.tokendir = %s\\nobjectstore.backend = file\\nlog.level = ERROR\\n' \\",
+            "    \"$HOME/.keyforge/softhsm/tokens\" > \"$HOME/.keyforge/softhsm/softhsm2.conf\"",
+            "  SOFTHSM2_CONF=\"$HOME/.keyforge/softhsm/softhsm2.conf\" \\",
+            "    softhsm2-util --init-token --free --label keyforge --pin \"$PIN\" --so-pin \"$SO_PIN\"",
+        )),
+        "\n".join((
+            "PIN is the user PIN from --init-token --pin. Enter that as KEYFORGE_PKCS11_PIN.",
+            "The SO PIN is only for --so-pin. It is not saved.",
+        )),
+    ]
+    if no_token:
+        groups.append(
+            "That check ran and no token labeled keyforge came up. "
+            "Create one with the commands above."
+        )
+    groups.append("\n".join((
         "The module is often /usr/lib/softhsm/libsofthsm2.so (dpkg -L softhsm2 | grep '\\.so$').",
-        "A hardware token skips softhsm2-util and uses that vendor's .so instead.",
-    ))
+        "That file is the PKCS#11 library KeyForge loads. "
+        "The dpkg command prints the path SoftHSM was installed to when the default file is not there.",
+    )))
+    groups.append(
+        "A hardware token skips softhsm2-util and uses that vendor's .so instead. "
+        "That device is not SoftHSM. Point KEYFORGE_PKCS11_MODULE at the library the vendor shipped."
+    )
+    return "\n\n".join(groups)
 
 
 def tokendir(conf_path: str | None) -> Path | None:

@@ -219,11 +219,12 @@ class Pkcs11Token:
         if not module_path or not token_label or not key_label:
             raise KeyForgeError("PKCS#11 module, token label, and key label are required")
         if pin is None or pin == "":
-            from .softhsm import setup_instructions
+            from .softhsm import matching_tokens, setup_instructions
+            conf = os.environ.get("SOFTHSM2_CONF") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
             raise KeyForgeError(
                 "KEYFORGE_PKCS11_PIN is required. It is the user PIN from "
                 "softhsm2-util --init-token --pin, not the SO PIN.\n"
-                + setup_instructions()
+                + setup_instructions(no_token=not matching_tokens("keyforge", conf))
             )
         self.module_path = module_path
         self.token_label = token_label
@@ -373,8 +374,9 @@ def pkcs11_from_env() -> Pkcs11Kms:
     if missing:
         message = "PKCS#11 provider is missing " + ", ".join(missing)
         if "KEYFORGE_PKCS11_PIN" in missing:
-            from .softhsm import setup_instructions
-            message += "\n" + setup_instructions()
+            from .softhsm import matching_tokens, setup_instructions
+            conf = os.environ.get("SOFTHSM2_CONF") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
+            message += "\n" + setup_instructions(no_token=not matching_tokens("keyforge", conf))
         raise KeyForgeError(message)
     return Pkcs11Kms(Pkcs11Token(module, token, pin, label), label)
 
@@ -469,8 +471,9 @@ def status(store_path: str | None = None) -> dict:
             missing.append("KEYFORGE_PKCS11_TOKEN")
         if not pin_set:
             missing.append("KEYFORGE_PKCS11_PIN")
-            from .softhsm import setup_instructions
-            info["softhsm_setup"] = setup_instructions()
+            from .softhsm import matching_tokens, setup_instructions
+            conf = os.environ.get("SOFTHSM2_CONF") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
+            info["softhsm_setup"] = setup_instructions(no_token=not matching_tokens("keyforge", conf))
         if not label:
             missing.append("KEYFORGE_PKCS11_KEY_LABEL")
         if missing:
