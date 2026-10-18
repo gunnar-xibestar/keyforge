@@ -20,8 +20,8 @@ ROUTES = {
     "/whoami": {"GET": ()},
     "/packets": {"GET": ("read:packets",)},
     "/admin": {"GET": ("write:packets",)},
-    # Failure demo: client attempts to create a secret. Requires API-key scope keys:write.
-    # The walkthrough key only has read:packets, so POST /keys returns 403. Does not mint a key.
+    # Demo of a client attempting to create a secret. Requires API-key scope keys:write.
+    # Does not mint a key; real creates use the CLI with Auth0 operator scope keys:write.
     "/keys": {"POST": ("keys:write",)},
     # Success + redact demo: requires read:packets (walkthrough key gets 200) but omits verify
     # output (hash dump, envelope, verified flag). Stronger scope would be needed for those fields.
@@ -94,6 +94,13 @@ def dispatch(store_path: str, method: str, path: str, authorization: str | None,
         }}
         if scope:
             body["required_scope"] = scope
+        if route == "/keys":
+            body["created"] = False
+            body["note"] = (
+                "Demo only: this route checks API-key scope keys:write. "
+                "It does not mint a secret. Real creates use `keyforge create` "
+                "with Auth0 operator scope keys:write."
+            )
         return 200, body
     finally:
         st.close()
@@ -141,7 +148,7 @@ def serve(store_path: str, host: str = "127.0.0.1", port: int = 8787) -> int:
     print(f"{BANNER}")
     print(f"demo server listening on http://{host}:{port}")
     print("routes: GET /health (open), GET /whoami (any key), GET /packets (scope read:packets),")
-    print("        GET /admin (scope write:packets), POST /keys (scope keys:write; failure demo),")
+    print("        GET /admin (scope write:packets), POST /keys (scope keys:write; demo only, no mint),")
     print("        GET /verify (scope read:packets; verify output redacted)")
     print("auth:   Authorization: Bearer <kf_... secret>")
     try:

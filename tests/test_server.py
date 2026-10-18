@@ -99,6 +99,19 @@ class DispatchTests(_ServerFixture):
         self.assertEqual(status, 403)
         self.assertEqual(body["error"], "missing scope 'keys:write'")
 
+    def test_keys_post_accepts_keys_write_without_minting(self):
+        rc, out, _ = run("--json", "create", "--name", "writer", "--owner", "carol",
+                         "--scope", "keys:write")
+        self.assertEqual(rc, 0, out)
+        writer = json.loads(out)["secret"]
+        status, body = server.dispatch(
+            self.path, "POST", "/keys", f"Bearer {writer}", "127.0.0.1")
+        self.assertEqual(status, 200, body)
+        self.assertIs(body["created"], False)
+        self.assertIn("note", body)
+        self.assertIn("keyforge create", body["note"])
+        self.assertEqual(body["required_scope"], "keys:write")
+
     def test_verify_accepts_demo_key_without_verify_output(self):
         status, body = server.dispatch(
             self.path, "GET", "/verify", None, "127.0.0.1")
