@@ -160,7 +160,7 @@ class SetupTests(unittest.TestCase):
         self.assertLess(prompts.index("Press Enter when the new token exists: "), prompts.index("KEYFORGE_PKCS11_MODULE [/usr/lib/softhsm/libsofthsm2.so]: "))
         self.assertIn("No existing token labeled 'keyforge'", text)
         self.assertIn("That check ran and no token labeled keyforge came up", text)
-        self.assertIn("That file is the PKCS#11 library", text)
+        self.assertIn("/usr/lib/x86_64-linux-gnu/softhsm/", text)
         self.assertIn("Create a new token:", text)
         self.assertLess(text.index("kms status"), text.index("Auth0 dashboard"))
         self.assertIn("provider: pkcs11", text)
