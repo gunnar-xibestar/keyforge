@@ -37,7 +37,9 @@ Store: `--store PATH`, `$KEYFORGE_STORE`, or `~/.keyforge/store.json`. Writes ar
 
 ### 2. `keyforge setup`
 
-Run `keyforge setup`. It is interactive and refuses a non-interactive stdin. `keyforge` with no command exits with a usage error. The prompt writes every answer except the Auth0 password to `~/.keyforge/keyforge.env` (mode 0600). Later commands apply that file over a same-named variable inherited from the shell. The parent shell itself is unchanged.
+Run `keyforge setup`. It is interactive and refuses a non-interactive stdin. `keyforge` with no command exits with a usage error.
+
+The prompt writes every answer except the Auth0 password to `~/.keyforge/keyforge.env` (mode 0600). Later commands apply that file over a same-named variable inherited from the shell. The parent shell itself is unchanged.
 
 The steps below are the prompt, in order. The reference material for each step sits under that step.
 
@@ -49,7 +51,9 @@ The screen prints where each value comes from, then asks:
 KEYFORGE_KMS_PROVIDER [local]:
 ```
 
-Setup records the answer and prints `keyforge kms status` before Auth0. `result: success` means that provider is ready; `result: failure` prints the error and setup continues. Auth0 `auth login` / `auth status` do **not** use the KMS — only `create`, `rotate`, and `reveal` (and envelope import) do.
+Setup records the answer and prints `keyforge kms status` before Auth0. `result: success` means that provider is ready; `result: failure` prints the error and setup continues.
+
+Auth0 `auth login` / `auth status` do **not** use the KMS — only `create`, `rotate`, and `reveal` (and envelope import) do.
 
 | provider | what wraps the data key |
 |---|---|
@@ -57,11 +61,41 @@ Setup records the answer and prints `keyforge kms status` before Auth0. `result:
 | `pkcs11` | AES-256-GCM inside a PKCS#11 token. The wrapping key is not exported. |
 | `memory` | Replaces `pkcs11` and `local` for unit tests. An in-process key (`KEYFORGE_KMS_MEMORY_KEY` may pin it as 64 hex chars). Useless after the process exits. |
 
-**If you enter `local`.** Setup asks for `KEYFORGE_KMS_KEY_FILE`. Leave it blank to keep the key at `<store-dir>/kms-master.key`. The default store is `~/.keyforge/store.json`, so the default key is `~/.keyforge/kms-master.key`. The file is a software KEK. Put `KEYFORGE_KMS_KEY_FILE` outside the store directory if the ciphertext and the wrapping key should sit on different permission boundaries. Anyone who can read both can reveal secrets. Find the store with `echo "${KEYFORGE_STORE:-$HOME/.keyforge/store.json}"`.
+**If you enter `local`.** Setup asks for `KEYFORGE_KMS_KEY_FILE`. Leave it blank to keep the key at `<store-dir>/kms-master.key`.
 
-**If you enter `pkcs11`.** Install the binding and a module first (see [Package](#1-package)). Setup prints the commands to create a SoftHSM token. If one token labeled `keyforge` already exists, setup reuses it as main. If several exist, it lists them oldest first and can delete any except the main token. Create waits until you press Enter, then asks, in order, for `KEYFORGE_PKCS11_MODULE` (default `/usr/lib/softhsm/libsofthsm2.so`; `dpkg -L softhsm2 | grep '\.so$'`), `KEYFORGE_PKCS11_TOKEN` (default `keyforge`; `softhsm2-util --show-slots`; skipped and fixed to `keyforge` when that token is reused), then the AES key label, then the user PIN (`KEYFORGE_PKCS11_PIN`, from `--init-token --pin`, not the SO PIN), then `SOFTHSM2_CONF` (default `~/.keyforge/softhsm/softhsm2.conf`). If an AES key labeled `keyforge-kek` is already on the token, setup keeps that label and does not ask `KEYFORGE_PKCS11_KEY_LABEL`. Otherwise it asks for `KEYFORGE_PKCS11_KEY_LABEL` (default `keyforge-kek`). If `keyforge-kek` is absent and other AES keys are on the token, those other keys are deleted and each deletion is printed. If `keyforge-kek` is present, setup lists the keys. A number selects that key. `d` and a number deletes any key except `keyforge-kek`. The user PIN is asked after that choice. The new-key warning is printed only when the label was just entered, that key is present, and no PIN was saved yet. A missing AES key is still generated on first use (create, rotate, or reveal). That generation does not ask for a new PIN; it uses the same `KEYFORGE_PKCS11_PIN` already used to open the token session. The PIN is stored in `keyforge.env` at mode 0600. It is not written to the store or to logs. A later TTY prompt for a missing PIN stays in the process only and is not written back to `keyforge.env`.
+The default store is `~/.keyforge/store.json`, so the default key is `~/.keyforge/kms-master.key`. The file is a software KEK. Put `KEYFORGE_KMS_KEY_FILE` outside the store directory if the ciphertext and the wrapping key should sit on different permission boundaries. Anyone who can read both can reveal secrets.
 
-`keyforge kms status` then reports `provider: pkcs11` and `ready: True`, or lists what is missing. `Pkcs11Kms` talks to any object with `wrap(label, dek, aad)` / `unwrap(label, blob, aad)`. `Pkcs11Token` is the real session: it loads the module, finds the token by label, logs in with the user PIN, and finds or creates the labeled AES key. `FakePkcs11Token` is the in-memory stand-in the unit tests use when they are not pointing at SoftHSM. `Pkcs11Kms` does not care which backend it holds. Point the variables above at a hardware module to use one; no code change is required.
+Find the store with `echo "${KEYFORGE_STORE:-$HOME/.keyforge/store.json}"`.
+
+**If you enter `pkcs11`.** Install the binding and a module first (see [Package](#1-package)). Setup prints the commands to create a SoftHSM token.
+
+If one token labeled `keyforge` already exists, setup reuses it as main. If several exist, it lists them oldest first and can delete any except the main token. Create waits until you press Enter.
+
+Setup then asks, in order, for:
+
+- `KEYFORGE_PKCS11_MODULE` (default `/usr/lib/softhsm/libsofthsm2.so`; `dpkg -L softhsm2 | grep '\.so$'`)
+- `KEYFORGE_PKCS11_TOKEN` (default `keyforge`; `softhsm2-util --show-slots`; skipped and fixed to `keyforge` when that token is reused)
+- the AES key label
+- the user PIN (`KEYFORGE_PKCS11_PIN`, from `--init-token --pin`, not the SO PIN)
+- `SOFTHSM2_CONF` (default `~/.keyforge/softhsm/softhsm2.conf`)
+
+If an AES key labeled `keyforge-kek` is already on the token, setup keeps that label and does not ask `KEYFORGE_PKCS11_KEY_LABEL`. Otherwise it asks for `KEYFORGE_PKCS11_KEY_LABEL` (default `keyforge-kek`).
+
+If `keyforge-kek` is absent and other AES keys are on the token, those other keys are deleted and each deletion is printed. If `keyforge-kek` is present, setup lists the keys. A number selects that key. `d` and a number deletes any key except `keyforge-kek`. The user PIN is asked after that choice.
+
+The new-key warning is printed only when the label was just entered, that key is present, and no PIN was saved yet.
+
+A missing AES key is still generated on first use (create, rotate, or reveal). That generation does not ask for a new PIN; it uses the same `KEYFORGE_PKCS11_PIN` already used to open the token session.
+
+The PIN is stored in `keyforge.env` at mode 0600. It is not written to the store or to logs. A later TTY prompt for a missing PIN stays in the process only and is not written back to `keyforge.env`.
+
+`keyforge kms status` then reports `provider: pkcs11` and `ready: True`, or lists what is missing.
+
+`Pkcs11Kms` talks to any object with `wrap(label, dek, aad)` / `unwrap(label, blob, aad)`.
+
+`Pkcs11Token` is the real session: it loads the module, finds the token by label, logs in with the user PIN, and finds or creates the labeled AES key. `FakePkcs11Token` is the in-memory stand-in the unit tests use when they are not pointing at SoftHSM. `Pkcs11Kms` does not care which backend it holds.
+
+Point the variables above at a hardware module to use one; no code change is required.
 
 **If you enter `memory`.** Nothing else is asked. The key dies with the process. Do not use it for a store you need to open again.
 
@@ -71,9 +105,13 @@ Setup records the answer and prints `keyforge kms status` before Auth0. `result:
 Set up Auth0 now? [Y/n]
 ```
 
-Pressing Enter accepts yes. Auth0 is **off** until all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE` are set. Setting only some of them is an error. When all three are already in the environment (including from `keyforge.env`), setup keeps them, prints them, and does not ask this question. Unset `AUTH0_DOMAIN` to enter different values.
+Pressing Enter accepts yes. Auth0 is **off** until all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE` are set. Setting only some of them is an error.
 
-Answering no warns that Auth0 is necessary for the demo, then stops after saving the KMS choice: every command trusts the OS user, and there is no operator scope gate. Anyone who can run `keyforge` as this user can create, reveal, and delete keys. Turn Auth0 on later by running `keyforge setup` again after the dashboard work below. `keyforge auth status` reports `auth disabled` until then.
+When all three are already in the environment (including from `keyforge.env`), setup keeps them, prints them, and does not ask this question. Unset `AUTH0_DOMAIN` to enter different values.
+
+Answering no warns that Auth0 is necessary for the demo, then stops after saving the KMS choice: every command trusts the OS user, and there is no operator scope gate. Anyone who can run `keyforge` as this user can create, reveal, and delete keys.
+
+Turn Auth0 on later by running `keyforge setup` again after the dashboard work below. `keyforge auth status` reports `auth disabled` until then.
 
 #### Step 3. Auth0 settings
 
@@ -94,7 +132,9 @@ AUTH0_CLIENT_ID   Applications → Native app → Settings → Client ID
 AUTH0_AUDIENCE    Applications → APIs → Settings → Identifier (for example https://keyforge.local/api)
 ```
 
-`AUTH0_CLIENT_SECRET` is optional and environment-only. Setup does not ask for it, and it is never stored. `AUTH0_SCOPES` overrides the scope string requested at login. The default is:
+`AUTH0_CLIENT_SECRET` is optional and environment-only. Setup does not ask for it, and it is never stored.
+
+`AUTH0_SCOPES` overrides the scope string requested at login. The default is:
 
 ```
 keys:read keys:write keys:verify reveal:secret offline_access
@@ -109,13 +149,23 @@ username:
 password:
 ```
 
-The username is the database user (User Management → Users), usually the email. It is not the Client ID. The password is that user's password. It is not the Client Secret. It is sent with Auth0's password-realm grant and is not written to disk. The default realm is `Username-Password-Authentication` (`AUTH0_REALM` overrides it). That grant has to be enabled on the Native app.
+The username is the database user (User Management → Users), usually the email. It is not the Client ID. The password is that user's password. It is not the Client Secret. It is sent with Auth0's password-realm grant and is not written to disk.
 
-`auth login` remains a separate device-code command: it prints a URL and a short code, then stores a lean access token (and a refresh token when issued) in `KEYFORGE_TOKEN_FILE` or `~/.keyforge/tokens.json` (mode 0600). `auth login --from-file response.json` validates a token response you already have; `id_token` is discarded. `auth logout` deletes the token file. `auth login`, `auth status`, and `auth logout` do not require an existing principal. Setup does not print `auth status`. Run `keyforge auth status` when you want the principal, scopes, and `missing_scopes`. It never prints the token.
+The default realm is `Username-Password-Authentication` (`AUTH0_REALM` overrides it). That grant has to be enabled on the Native app.
 
-Auth0 returns the **intersection** of what KeyForge requested and what the tenant grants. Permission names must match exactly (trailing spaces in Auth0 silently drop a scope). If `keyforge auth status` shows only `keys:read` and `offline_access`, the other permissions are missing in the API or the app grant. KeyForge is not dropping them. RBAC stays off for this setup; turning it on also drops any permission not assigned to that user or role.
+`auth login` remains a separate device-code command: it prints a URL and a short code, then stores a lean access token (and a refresh token when issued) in `KEYFORGE_TOKEN_FILE` or `~/.keyforge/tokens.json` (mode 0600).
 
-Until you log in, gated commands fail. After login, each command needs the matching scope. A missing scope exits **4**. The audit `actor` is the Auth0 `sub` unless `KEYFORGE_ACTOR` is already set. `os_user` remains the process uid. KeyForge does not call the Auth0 Management API or `/userinfo`. API-key secrets are not sent to Auth0.
+`auth login --from-file response.json` validates a token response you already have; `id_token` is discarded. `auth logout` deletes the token file. `auth login`, `auth status`, and `auth logout` do not require an existing principal.
+
+Setup does not print `auth status`. Run `keyforge auth status` when you want the principal, scopes, and `missing_scopes`. It never prints the token.
+
+Auth0 returns the **intersection** of what KeyForge requested and what the tenant grants. Permission names must match exactly (trailing spaces in Auth0 silently drop a scope).
+
+If `keyforge auth status` shows only `keys:read` and `offline_access`, the other permissions are missing in the API or the app grant. KeyForge is not dropping them. RBAC stays off for this setup; turning it on also drops any permission not assigned to that user or role.
+
+Until you log in, gated commands fail. After login, each command needs the matching scope. A missing scope exits **4**.
+
+The audit `actor` is the Auth0 `sub` unless `KEYFORGE_ACTOR` is already set. `os_user` remains the process uid. KeyForge does not call the Auth0 Management API or `/userinfo`. API-key secrets are not sent to Auth0.
 
 | scope | commands |
 |---|---|
@@ -155,7 +205,9 @@ Scopes look like `resource:action`. Grants may be globs (`read:*`). Statuses: ac
 
 ## Secret storage
 
-`create` draws a fresh 32-byte data key, encrypts the secret with **AES-256-GCM**, and asks the KMS to wrap that data key. The associated data binds the ciphertext to the key id, so an envelope cannot be moved onto another record. `reveal` unwraps, decrypts, and checks the plaintext against the PBKDF2 hash before printing it. A bad tag, a wrong master key, or a hash mismatch fails closed and returns no secret.
+`create` draws a fresh 32-byte data key, encrypts the secret with **AES-256-GCM**, and asks the KMS to wrap that data key. The associated data binds the ciphertext to the key id, so an envelope cannot be moved onto another record.
+
+`reveal` unwraps, decrypts, and checks the plaintext against the PBKDF2 hash before printing it. A bad tag, a wrong master key, or a hash mismatch fails closed and returns no secret.
 
 `verify` never decrypts. It still walks candidates by prefix and compares the PBKDF2 hash in constant time.
 
@@ -176,7 +228,9 @@ The on-disk hash record is unchanged: `algo`, `iterations`, `salt`, `hash`. The 
 | `GET /packets` | secret must grant scope `read:packets` |
 | `GET /admin` | secret must grant scope `write:packets` |
 
-Each request calls `verify` (hash + status + optional scope/IP). Missing/invalid Bearer → 401; failed verify → 403. Auth0, when enabled, only gates who may *start* the server (`keys:verify`); API clients still present KeyForge secrets, never Auth0 tokens.
+Each request calls `verify` (hash + status + optional scope/IP). Missing/invalid Bearer → 401; failed verify → 403.
+
+Auth0, when enabled, only gates who may *start* the server (`keys:verify`); API clients still present KeyForge secrets, never Auth0 tokens.
 
 ### Walkthrough
 
@@ -282,7 +336,9 @@ python -m unittest discover -s tests -v
 
 ## Audit integrity
 
-Each audit event is one object in the store's `audit` list. Chained events carry `prev_hash` and `hash`. `hash` is SHA-256 of the event's canonical JSON with `hash` and `mac` removed (sorted keys, no extra spaces). `prev_hash` is the previous event's `hash`, or 64 zero digits for the first chained event. Changing a field changes that event's hash, which changes the next event's `prev_hash`, and so on to the end.
+Each audit event is one object in the store's `audit` list. Chained events carry `prev_hash` and `hash`.
+
+`hash` is SHA-256 of the event's canonical JSON with `hash` and `mac` removed (sorted keys, no extra spaces). `prev_hash` is the previous event's `hash`, or 64 zero digits for the first chained event. Changing a field changes that event's hash, which changes the next event's `prev_hash`, and so on to the end.
 
 `audit_meta` sits beside the log:
 
@@ -294,13 +350,27 @@ Each audit event is one object in the store's `audit` list. Chained events carry
 | `hmac_from` | index of the first event that must have a MAC, once an HMAC key is in use. |
 | `mac` | HMAC-SHA256 of `legacy\|count\|head\|hmac_from`, present only when a key is in use. |
 
-`audit --verify` walks the log and compares it to `audit_meta`. It exits 7 on any mismatch, including missing metadata. A missing `hash` or `prev_hash` on a chained event, a `prev_hash` that does not match the previous event, a content hash that does not match the body, a `count` or `head` that does not match the log, or a bad metadata MAC all fail. Legacy events are skipped: they are counted, and they are not hashed.
+`audit --verify` walks the log and compares it to `audit_meta`. It exits 7 on any mismatch, including missing metadata.
 
-Stores from before hash-chaining have events and no `audit_meta`. `audit --adopt-legacy` records that count as `legacy`, sets `head` to the 64 zeros, and appends an `audit_adopt_legacy` event. Those older events stay without hashes. The adoption event is chained. If the log already contains hashed events but the metadata is gone, adopt refuses: recreating the metadata would bless a stripped log.
+A missing `hash` or `prev_hash` on a chained event, a `prev_hash` that does not match the previous event, a content hash that does not match the body, a `count` or `head` that does not match the log, or a bad metadata MAC all fail. Legacy events are skipped: they are counted, and they are not hashed.
 
-The hash chain is unkeyed until `KEYFORGE_AUDIT_HMAC_KEY_FILE` is set. Anyone who can write the store can edit an event and recompute `prev_hash`, `hash`, `count`, and `head`. `audit --verify` then passes. The file must contain at least 16 bytes, mode 0600, and must not be a symlink. With that key, each new event stores `mac` = HMAC-SHA256(key, hash), and `audit_meta.mac` covers the metadata. A writer who cannot read the key cannot produce those MACs. Events before `hmac_from`, and every legacy event, still have no MAC. Rewriting only those events is not detected. If the key file is missing or unusable at write time, the event is still stored (a revoke is never blocked), a warning goes to stderr, and a later keyed `audit --verify` fails.
+Stores from before hash-chaining have events and no `audit_meta`. `audit --adopt-legacy` records that count as `legacy`, sets `head` to the 64 zeros, and appends an `audit_adopt_legacy` event. Those older events stay without hashes. The adoption event is chained.
 
-`keyforge setup` runs this check after the KMS choice is saved. It prints the store path, runs the same check as `audit --verify`, and prints `audit chain OK` with the chained-event count, the log count, and the head, plus `MAC verified` when the key is usable. If `audit_meta` is absent and the log has no hashed events, setup adopts the legacy log and says those events cannot be checked for tampering. If `KEYFORGE_AUDIT_HMAC_KEY_FILE` is unset, setup creates `<store-dir>/audit-hmac.key` (32 random bytes, mode 0600) and saves that path. The file is next to the store, so anyone who can read that directory can still forge a chain. Move the file somewhere store writers cannot read it when you need the MAC to mean tamper evidence. Setup writes one `audit_hmac_enabled` event the first time the metadata has no MAC, so the MAC starts at that event. Events before it stay unverified against the key.
+If the log already contains hashed events but the metadata is gone, adopt refuses: recreating the metadata would bless a stripped log.
+
+The hash chain is unkeyed until `KEYFORGE_AUDIT_HMAC_KEY_FILE` is set. Anyone who can write the store can edit an event and recompute `prev_hash`, `hash`, `count`, and `head`. `audit --verify` then passes.
+
+The file must contain at least 16 bytes, mode 0600, and must not be a symlink. With that key, each new event stores `mac` = HMAC-SHA256(key, hash), and `audit_meta.mac` covers the metadata. A writer who cannot read the key cannot produce those MACs.
+
+Events before `hmac_from`, and every legacy event, still have no MAC. Rewriting only those events is not detected. If the key file is missing or unusable at write time, the event is still stored (a revoke is never blocked), a warning goes to stderr, and a later keyed `audit --verify` fails.
+
+`keyforge setup` runs this check after the KMS choice is saved. It prints the store path, runs the same check as `audit --verify`, and prints `audit chain OK` with the chained-event count, the log count, and the head, plus `MAC verified` when the key is usable.
+
+If `audit_meta` is absent and the log has no hashed events, setup adopts the legacy log and says those events cannot be checked for tampering.
+
+If `KEYFORGE_AUDIT_HMAC_KEY_FILE` is unset, setup creates `<store-dir>/audit-hmac.key` (32 random bytes, mode 0600) and saves that path. The file is next to the store, so anyone who can read that directory can still forge a chain. Move the file somewhere store writers cannot read it when you need the MAC to mean tamper evidence.
+
+Setup writes one `audit_hmac_enabled` event the first time the metadata has no MAC, so the MAC starts at that event. Events before it stay unverified against the key.
 
 ## Import hardening
 
@@ -356,7 +426,9 @@ pip uninstall keyforge
 
 `uninstall` deletes the data directory `~/.keyforge`: the store, the local KMS key that lives beside it, tokens, and anything else in that directory. It overwrites regular files before unlinking them. It does not remove the `keyforge` command. Run `pip uninstall keyforge` after the data is gone.
 
-It refuses a symlinked data directory, a directory you do not own, and a store that another process has locked. Symlinks inside the directory are removed without deleting their targets. A file outside `~/.keyforge` is left alone, including one named by `KEYFORGE_STORE`, `KEYFORGE_TOKEN_FILE`, `KEYFORGE_KMS_KEY_FILE`, or `KEYFORGE_AUDIT_HMAC_KEY_FILE`, unless you pass `--include-configured`. That flag deletes those files only, not their parent directories. `--store` is rejected.
+It refuses a symlinked data directory, a directory you do not own, and a store that another process has locked. Symlinks inside the directory are removed without deleting their targets.
+
+A file outside `~/.keyforge` is left alone, including one named by `KEYFORGE_STORE`, `KEYFORGE_TOKEN_FILE`, `KEYFORGE_KMS_KEY_FILE`, or `KEYFORGE_AUDIT_HMAC_KEY_FILE`, unless you pass `--include-configured`. That flag deletes those files only, not their parent directories. `--store` is rejected.
 
 ## Program extensibility
 
