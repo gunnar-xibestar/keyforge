@@ -336,11 +336,44 @@ python -m unittest discover -s tests -v
 
 ## Audit integrity
 
-Each audit event is one object in the store's `audit` list. Chained events carry `prev_hash` and `hash`.
+The audit log records who did what to which key. Integrity is a hash chain over that log, optionally keyed with HMAC. Mutations write the next link. Checking the chain is separate: it runs only when you ask (`audit --verify`) or during `keyforge setup`. Ordinary commands do not re-verify the chain before they append.
 
-`hash` is SHA-256 of the event's canonical JSON with `hash` and `mac` removed (sorted keys, no extra spaces). `prev_hash` is the previous event's `hash`, or 64 zero digits for the first chained event. Changing a field changes that event's hash, which changes the next event's `prev_hash`, and so on to the end.
+### When events are written
 
-`audit_meta` sits beside the log:
+Each successful mutating command appends one (or more) events to the store's `audit` list. Typical actions:
+
+| action | command |
+|---|---|
+| `create` | `create` |
+| `reveal` | `reveal` |
+| `verify_ok` / `verify_fail` | `verify` |
+| `rotate` | `rotate` |
+| `revoke` / `suspend` / `resume` | status changes |
+| `update` | `update` (only when something actually changes) |
+| `purge` | `purge` (one event per deleted key) |
+| `import` | `import` (non-dry-run) |
+| `export` | `export` to a file (stdout `-` does not audit) |
+| `policy_set` / `policy_reset` | `policy set` / `policy reset` |
+| `audit_adopt_legacy` | `audit --adopt-legacy`, or setup when metadata is missing |
+| `audit_hmac_enabled` | setup, the first time it enables a metadata MAC |
+
+`list`, `show`, `policy show`, dry-runs, and a plain `audit` query do not append.
+
+A brand-new store starts with `audit_meta` already present (`legacy` 0, `count` 0, `head` 64 zeros). Older stores that never had chaining need adopt (below).
+
+### How a write extends the chain
+
+On each append, KeyForge builds the event (`ts`, `actor`, `os_user`, `os_uid`, `action`, `key_id`, `details`), sets `prev_hash` to the current `audit_meta.head` (or 64 zeros for the first chained event), then sets `hash` to SHA-256 of the event's canonical JSON with `hash` and `mac` removed (sorted keys, no extra spaces).
+
+`audit_meta.count` becomes the new log length. `audit_meta.head` becomes that event's `hash`. Changing a field changes that event's hash, which changes the next event's `prev_hash`, and so on to the end.
+
+If `KEYFORGE_AUDIT_HMAC_KEY_FILE` points at a usable key, the same write also stores `mac` = HMAC-SHA256(key, hash) on the event, and refreshes `audit_meta.mac` over `legacy|count|head|hmac_from`. `hmac_from` is set to the index of the first MAC'd event the first time a key is in use.
+
+If the key file is set but missing or unusable at write time, the event is still stored (a revoke is never blocked). A warning goes to stderr. A later keyed `audit --verify` fails.
+
+If `audit_meta` is missing entirely on a store that already has events, new writes are appended without hashes and a warning goes to stderr. The chain stays broken until you adopt or fix the store.
+
+`audit_meta` fields:
 
 | field | meaning |
 |---|---|
@@ -350,27 +383,43 @@ Each audit event is one object in the store's `audit` list. Chained events carry
 | `hmac_from` | index of the first event that must have a MAC, once an HMAC key is in use. |
 | `mac` | HMAC-SHA256 of `legacy\|count\|head\|hmac_from`, present only when a key is in use. |
 
-`audit --verify` walks the log and compares it to `audit_meta`. It exits 7 on any mismatch, including missing metadata.
+### When the chain is checked
 
-A missing `hash` or `prev_hash` on a chained event, a `prev_hash` that does not match the previous event, a content hash that does not match the body, a `count` or `head` that does not match the log, or a bad metadata MAC all fail. Legacy events are skipped: they are counted, and they are not hashed.
+Verification is explicit. It does not run on every create, reveal, or revoke.
 
-Stores from before hash-chaining have events and no `audit_meta`. `audit --adopt-legacy` records that count as `legacy`, sets `head` to the 64 zeros, and appends an `audit_adopt_legacy` event. Those older events stay without hashes. The adoption event is chained.
+**`keyforge audit --verify`.** Walks the log and compares it to `audit_meta`. Exit **0** on success, **7** on any mismatch (including missing metadata).
+
+What fails: a missing `hash` or `prev_hash` on a chained event; a `prev_hash` that does not match the previous event; a content hash that does not match the body; a `count` or `head` that does not match the log; a bad per-event or metadata MAC when a key is in use.
+
+Legacy events (indices below `legacy`) are counted and skipped: they are not hashed. On success the command prints `audit chain OK` with the chained-event count, the log count, and the head, plus `MAC verified` when the key checked out.
+
+**`keyforge setup`.** After the KMS choice is saved, setup prints `audit chain` and the store path, then runs the same check as `audit --verify`. It does not exit 7 on failure; it prints `AUDIT CHAIN BROKEN: …` and continues. On success it prints the same `audit chain OK` line.
+
+Setup also repairs and hardens when it can:
+
+1. If `audit_meta` is absent and the log has no hashed events, setup runs the same path as `audit --adopt-legacy`, then says those legacy events cannot be checked for tampering.
+2. If `KEYFORGE_AUDIT_HMAC_KEY_FILE` is unset, setup creates `<store-dir>/audit-hmac.key` (32 random bytes, mode 0600), saves that path into `keyforge.env`, and prints `audit HMAC key created: …`.
+3. The first time a usable key is present and metadata has no `mac` yet, setup writes one `audit_hmac_enabled` event so the MAC starts at that event. Events before it stay without a MAC.
+
+### Adopting a pre-chain store
+
+Stores from before hash-chaining have events and no `audit_meta`.
+
+`audit --adopt-legacy` (and setup, when metadata is absent) records that count as `legacy`, sets `head` to the 64 zeros, and appends a chained `audit_adopt_legacy` event. Those older events stay without hashes. The adoption event is chained.
 
 If the log already contains hashed events but the metadata is gone, adopt refuses: recreating the metadata would bless a stripped log.
 
-The hash chain is unkeyed until `KEYFORGE_AUDIT_HMAC_KEY_FILE` is set. Anyone who can write the store can edit an event and recompute `prev_hash`, `hash`, `count`, and `head`. `audit --verify` then passes.
+### What the chain does and does not catch
 
-The file must contain at least 16 bytes, mode 0600, and must not be a symlink. With that key, each new event stores `mac` = HMAC-SHA256(key, hash), and `audit_meta.mac` covers the metadata. A writer who cannot read the key cannot produce those MACs.
+Without an HMAC key, the chain is unkeyed. Anyone who can write the store can edit an event and recompute `prev_hash`, `hash`, `count`, and `head`. `audit --verify` then passes. The chain still detects accidental corruption and naive edits; it does not stop a writer who understands the format.
 
-Events before `hmac_from`, and every legacy event, still have no MAC. Rewriting only those events is not detected. If the key file is missing or unusable at write time, the event is still stored (a revoke is never blocked), a warning goes to stderr, and a later keyed `audit --verify` fails.
+The HMAC key file must contain at least 16 bytes, mode 0600, and must not be a symlink. With that key, a writer who cannot read the file cannot produce valid event or metadata MACs.
 
-`keyforge setup` runs this check after the KMS choice is saved. It prints the store path, runs the same check as `audit --verify`, and prints `audit chain OK` with the chained-event count, the log count, and the head, plus `MAC verified` when the key is usable.
+Default setup puts `audit-hmac.key` next to the store. Anyone who can read that directory can still forge a chain that verifies. Move the file somewhere store writers cannot read it when you need the MAC to mean tamper evidence.
 
-If `audit_meta` is absent and the log has no hashed events, setup adopts the legacy log and says those events cannot be checked for tampering.
+Events before `hmac_from`, and every legacy event, still have no MAC. Rewriting only those events is not detected as keyed tampering.
 
-If `KEYFORGE_AUDIT_HMAC_KEY_FILE` is unset, setup creates `<store-dir>/audit-hmac.key` (32 random bytes, mode 0600) and saves that path. The file is next to the store, so anyone who can read that directory can still forge a chain. Move the file somewhere store writers cannot read it when you need the MAC to mean tamper evidence.
-
-Setup writes one `audit_hmac_enabled` event the first time the metadata has no MAC, so the MAC starts at that event. Events before it stay unverified against the key.
+`actor` can be overridden with `KEYFORGE_ACTOR`. Trust `os_user` / `os_uid` for who ran the process.
 
 ## Import hardening
 
