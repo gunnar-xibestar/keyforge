@@ -269,7 +269,11 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
             _ask(read_line, "Press Enter when the new token exists: ")
         echo("")
         module = _ask(read_line, "KEYFORGE_PKCS11_MODULE [/usr/lib/softhsm/libsofthsm2.so]: ") or "/usr/lib/softhsm/libsofthsm2.so"
-        token = _ask(read_line, "KEYFORGE_PKCS11_TOKEN [keyforge]: ") or "keyforge"
+        if reuse:
+            token = "keyforge"
+            echo("Token label: keyforge")
+        else:
+            token = _ask(read_line, "KEYFORGE_PKCS11_TOKEN [keyforge]: ") or "keyforge"
         echo("PIN is the token user PIN from softhsm2-util --init-token --pin, not the SO PIN.")
         saved_pin = os.environ.get("KEYFORGE_PKCS11_PIN", "")
         while True:

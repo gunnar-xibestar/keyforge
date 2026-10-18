@@ -195,7 +195,6 @@ class SetupTests(unittest.TestCase):
             "pkcs11",
             "2",
             "/tmp/no-such-libsofthsm2.so",
-            "keyforge",
             "keyforge-kek",
             "",
             "n",
@@ -215,6 +214,8 @@ class SetupTests(unittest.TestCase):
         self.assertIn("Create a new token:", text)
         self.assertIn("deleted ", text)
         self.assertIn("Reuse uses oldest token. (main)", text)
+        self.assertIn("Token label: keyforge", text)
+        self.assertNotIn("KEYFORGE_PKCS11_TOKEN [keyforge]: ", prompts)
         self.assertIn("a new label", text)
         self.assertIn("limited number of slots", text)
 
