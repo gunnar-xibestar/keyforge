@@ -5,12 +5,13 @@ file over any same-named variables inherited from the shell. The Auth0
 password is never written there.
 """
 from __future__ import annotations
-import os, shlex, stat
+import os, secrets, shlex, stat
 from datetime import datetime
 from pathlib import Path
 
-from . import auth
+from . import audit, auth
 from .errors import AuthError, KeyForgeError
+from .store import Store, resolve_path
 from .kms import destroy_aes_labels, format_status, list_aes_labels, status as kms_status
 from .softhsm import delete_token, matching_tokens, setup_instructions
 
@@ -234,6 +235,69 @@ def _yes(read_line, prompt: str, *, default: bool = False) -> bool:
     return ans in ("y", "yes")
 
 
+def _audit_chain(echo, saved: dict) -> None:
+    """Verify the audit hash chain, start it when metadata is missing, and create an HMAC key file."""
+    path = resolve_path(None)
+    echo("")
+    echo("audit chain")
+    echo(f"store: {path}")
+    with Store(path) as st:
+        if st.data.get("audit_meta") is None:
+            echo("audit metadata is absent.")
+            try:
+                ev = audit.adopt_legacy(st)
+                st.save()
+            except KeyForgeError as e:
+                echo(f"audit chain was not created: {e}")
+                echo("Events already in this log cannot be checked for tampering.")
+            else:
+                n = ev["details"]["legacy"]
+                echo(f"audit chain started; {n} legacy event(s) recorded as unprotected.")
+                echo("A legacy event has no prev_hash or hash. Changing it or deleting it is not detected.")
+        key_file = os.environ.get("KEYFORGE_AUDIT_HMAC_KEY_FILE", "").strip()
+        if not key_file:
+            key_file = str(path.parent / "audit-hmac.key")
+            saved["KEYFORGE_AUDIT_HMAC_KEY_FILE"] = key_file
+            os.environ["KEYFORGE_AUDIT_HMAC_KEY_FILE"] = key_file
+        key_file = os.path.expanduser(key_file)
+        if not os.path.lexists(key_file):
+            os.makedirs(os.path.dirname(key_file) or ".", mode=0o700, exist_ok=True)
+            fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                os.write(fd, secrets.token_bytes(32))
+            finally:
+                os.close(fd)
+            echo(f"audit HMAC key created: {key_file}")
+        else:
+            echo(f"audit HMAC key: {key_file}")
+        try:
+            key = audit.hmac_key()
+        except KeyForgeError as e:
+            echo(f"audit HMAC key is unusable: {e}")
+            key = None
+        meta = st.data.get("audit_meta") or {}
+        if key and meta and "mac" not in meta:
+            audit.record(st, "audit_hmac_enabled")
+            st.save()
+            echo("A new audit event was written so the metadata MAC starts at this event.")
+            echo("Events before it have no MAC. Rebuilding their hashes is not detected as tampering.")
+        r = audit.verify_chain(st.audit_log, st.data.get("audit_meta"), key)
+    if r["ok"]:
+        line = f"audit chain OK: {r['checked']} chained event(s), count {r['count']}, head {r['head']}"
+        if r["mac_verified"]:
+            line += ", MAC verified"
+        echo(line)
+        if r["legacy"]:
+            echo(f"{r['legacy']} legacy event(s) have no hash. Tampering with those events is not detected.")
+    else:
+        echo(f"AUDIT CHAIN BROKEN: {r['error']}")
+    if key:
+        echo("The MAC detects a rewritten store only when the writer cannot read the HMAC key file.")
+        echo("This file is next to the store. Anyone who can read that directory can forge a chain that still verifies.")
+    else:
+        echo("The chain is unkeyed. Anyone who can write the store can recompute prev_hash and hash, and audit --verify still passes.")
+
+
 def run(*, read_line, read_secret, echo, login=None) -> dict:
     """Prompt for KMS, then Auth0. ``login`` defaults to ``auth.password_login``."""
     _marks(echo, 3)
@@ -356,10 +420,11 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         echo("warning: Auth0 is not set up. Every command trusts the OS user.")
         echo("warning: there is no operator scope gate. Anyone who can run keyforge as this user can create, reveal, and delete keys.")
         echo("warning: turn it on later with `keyforge setup` after creating a Native app and an API in the Auth0 dashboard.")
-        path = _write_env(saved)
         for key, value in saved.items():
             os.environ[key] = value
         info = auth.status()
+        _audit_chain(echo, saved)
+        path = _write_env(saved)
         echo("")
         echo("result: success")
         echo("  saved the KMS choice. Auth0 was skipped.")
@@ -382,6 +447,8 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         echo("Enable the Password grant (and Device Code if you still use `auth login`) on that Native app.")
         echo("")
         echo("API Permissions: keys:read keys:write keys:verify reveal:secret")
+        echo("Leave Enable RBAC off. Turn off Add Permissions in the Access Token.")
+        echo("With RBAC off, Auth0 puts those requested permissions into the scope claim. A user or role assignment is not required.")
         echo("")
         domain = _ask(read_line, "AUTH0_DOMAIN: ")
         echo("")
@@ -411,6 +478,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     password = read_secret("password: ")
     login = login or auth.password_login
     principal = login(username, password)
+    _audit_chain(echo, saved)
     path = _write_env(saved)
     echo("")
     echo("result: success")

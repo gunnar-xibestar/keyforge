@@ -83,7 +83,7 @@ Answering yes prints where each value is in the dashboard (https://manage.auth0.
 2. Create a **Native** application. Copy its **Client ID**.
 3. Enable the **Password** grant for this prompt, and the **Device Code** grant if you will also use `auth login`.
 4. Authorize the application for the API. Add these API scopes (Auth0 → APIs → your API → Permissions): `keys:read`, `keys:write`, `keys:verify`, `reveal:secret`. These are **operator** scopes for the CLI. They are not `kf_...` API-key scopes such as `read:packets`.
-5. Turn **off** “Add Permissions in the Access Token” (KeyForge reads a short `scope` claim only; see [Token diet](#token-diet)). If **Enable RBAC** is on, also assign those permissions to the Auth0 user (or role) — Auth0 only puts granted permissions into `scope`.
+5. Turn **off** “Add Permissions in the Access Token” (KeyForge reads a short `scope` claim only; see [Token diet](#token-diet)). Leave **Enable RBAC** off. With RBAC off, Auth0 copies the API permissions you requested into the access token `scope` claim. A working setup does not assign those permissions to a user or role. Turning RBAC on makes Auth0 omit any permission that user or role does not have, so login returns missing scopes.
 6. Under Applications → your Native app → APIs, authorize the app for that API and allow the same permissions.
 
 The three prompts:
@@ -113,7 +113,7 @@ The username is the database user (User Management → Users), usually the email
 
 `auth login` remains a separate device-code command: it prints a URL and a short code, then stores a lean access token (and a refresh token when issued) in `KEYFORGE_TOKEN_FILE` or `~/.keyforge/tokens.json` (mode 0600). `auth login --from-file response.json` validates a token response you already have; `id_token` is discarded. `auth logout` deletes the token file. `auth login`, `auth status`, and `auth logout` do not require an existing principal. Setup does not print `auth status`. Run `keyforge auth status` when you want the principal, scopes, and `missing_scopes`. It never prints the token.
 
-Auth0 returns the **intersection** of what KeyForge requested and what the tenant grants. Permission names must match exactly (trailing spaces in Auth0 silently drop a scope). If `keyforge auth status` shows only `keys:read` and `offline_access`, the other permissions are missing in the API, the app grant, or the user assignment. KeyForge is not dropping them.
+Auth0 returns the **intersection** of what KeyForge requested and what the tenant grants. Permission names must match exactly (trailing spaces in Auth0 silently drop a scope). If `keyforge auth status` shows only `keys:read` and `offline_access`, the other permissions are missing in the API or the app grant. KeyForge is not dropping them. RBAC stays off for this setup; turning it on also drops any permission not assigned to that user or role.
 
 Until you log in, gated commands fail. After login, each command needs the matching scope. A missing scope exits **4**. The audit `actor` is the Auth0 `sub` unless `KEYFORGE_ACTOR` is already set. `os_user` remains the process uid. KeyForge does not call the Auth0 Management API or `/userinfo`. API-key secrets are not sent to Auth0.
 
@@ -282,10 +282,25 @@ python -m unittest discover -s tests -v
 
 ## Audit integrity
 
-- `audit --verify` checks the hash chain and `audit_meta` (legacy count, event count, head). It exits 7 on any mismatch, including missing metadata.
-- Stores from before hash-chaining have no metadata. Run `audit --adopt-legacy` once to start the chain. Existing events stay unprotected, and the adoption is itself audited.
-- Optional HMAC: set `KEYFORGE_AUDIT_HMAC_KEY_FILE` to a file of at least 16 bytes, mode 0600, kept outside the store. If the key is missing or unusable, writes still succeed (a revoke is never blocked), but the event is stored without a MAC, a warning goes to stderr, and a later keyed `audit --verify` fails.
-- For real tamper evidence, set `KEYFORGE_AUDIT_HMAC_KEY_FILE`. Without it the chain is unkeyed. Anyone who can write the store file can rebuild a valid-looking chain. Keep the key where store writers cannot read it.
+Each audit event is one object in the store's `audit` list. Chained events carry `prev_hash` and `hash`. `hash` is SHA-256 of the event's canonical JSON with `hash` and `mac` removed (sorted keys, no extra spaces). `prev_hash` is the previous event's `hash`, or 64 zero digits for the first chained event. Changing a field changes that event's hash, which changes the next event's `prev_hash`, and so on to the end.
+
+`audit_meta` sits beside the log:
+
+| field | meaning |
+|---|---|
+| `legacy` | how many leading events have no hash. They pre-date the chain. |
+| `count` | how many events the chain expects. |
+| `head` | hash of the last chained event, or the 64 zeros when nothing is chained yet. |
+| `hmac_from` | index of the first event that must have a MAC, once an HMAC key is in use. |
+| `mac` | HMAC-SHA256 of `legacy\|count\|head\|hmac_from`, present only when a key is in use. |
+
+`audit --verify` walks the log and compares it to `audit_meta`. It exits 7 on any mismatch, including missing metadata. A missing `hash` or `prev_hash` on a chained event, a `prev_hash` that does not match the previous event, a content hash that does not match the body, a `count` or `head` that does not match the log, or a bad metadata MAC all fail. Legacy events are skipped: they are counted, and they are not hashed.
+
+Stores from before hash-chaining have events and no `audit_meta`. `audit --adopt-legacy` records that count as `legacy`, sets `head` to the 64 zeros, and appends an `audit_adopt_legacy` event. Those older events stay without hashes. The adoption event is chained. If the log already contains hashed events but the metadata is gone, adopt refuses: recreating the metadata would bless a stripped log.
+
+The hash chain is unkeyed until `KEYFORGE_AUDIT_HMAC_KEY_FILE` is set. Anyone who can write the store can edit an event and recompute `prev_hash`, `hash`, `count`, and `head`. `audit --verify` then passes. The file must contain at least 16 bytes, mode 0600, and must not be a symlink. With that key, each new event stores `mac` = HMAC-SHA256(key, hash), and `audit_meta.mac` covers the metadata. A writer who cannot read the key cannot produce those MACs. Events before `hmac_from`, and every legacy event, still have no MAC. Rewriting only those events is not detected. If the key file is missing or unusable at write time, the event is still stored (a revoke is never blocked), a warning goes to stderr, and a later keyed `audit --verify` fails.
+
+`keyforge setup` runs this check after the KMS choice is saved. It prints the store path, runs the same check as `audit --verify`, and prints `audit chain OK` with the chained-event count, the log count, and the head, plus `MAC verified` when the key is usable. If `audit_meta` is absent and the log has no hashed events, setup adopts the legacy log and says those events cannot be checked for tampering. If `KEYFORGE_AUDIT_HMAC_KEY_FILE` is unset, setup creates `<store-dir>/audit-hmac.key` (32 random bytes, mode 0600) and saves that path. The file is next to the store, so anyone who can read that directory can still forge a chain. Move the file somewhere store writers cannot read it when you need the MAC to mean tamper evidence. Setup writes one `audit_hmac_enabled` event the first time the metadata has no MAC, so the MAC starts at that event. Events before it stay unverified against the key.
 
 ## Import hardening
 

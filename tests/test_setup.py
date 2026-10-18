@@ -24,11 +24,13 @@ class SetupTests(unittest.TestCase):
             "AUTH0_DOMAIN", "AUTH0_CLIENT_ID", "AUTH0_AUDIENCE", "AUTH0_REALM",
             "KEYFORGE_PKCS11_MODULE", "KEYFORGE_PKCS11_TOKEN", "KEYFORGE_PKCS11_PIN",
             "KEYFORGE_PKCS11_KEY_LABEL", "KEYFORGE_PKCS11_CREATE_KEY", "SOFTHSM2_CONF",
+            "KEYFORGE_STORE", "KEYFORGE_AUDIT_HMAC_KEY_FILE",
         )}
         os.environ["KEYFORGE_ENV_FILE"] = self.env_file
         for key in self._saved:
             if key != "KEYFORGE_ENV_FILE":
                 os.environ.pop(key, None)
+        os.environ["KEYFORGE_STORE"] = os.path.join(self.d.name, "store.json")
         self.lines = []
         self.seen = []
 
@@ -71,6 +73,10 @@ class SetupTests(unittest.TestCase):
         self.assertNotIn("Settings → Domain", text)
         body = Path(self.env_file).read_text()
         self.assertIn("KEYFORGE_KMS_PROVIDER=local", body)
+        self.assertIn("audit chain OK:", text)
+        self.assertIn("MAC verified", text)
+        self.assertIn("KEYFORGE_AUDIT_HMAC_KEY_FILE=", body)
+        self.assertTrue(os.path.isfile(os.path.join(self.d.name, "audit-hmac.key")))
         self.assertNotIn("AUTH0_DOMAIN", body)
         self.assertNotIn("password=", body.lower())
         self.assertEqual(stat.S_IMODE(os.stat(self.env_file).st_mode), 0o600)
