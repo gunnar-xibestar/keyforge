@@ -20,6 +20,6 @@ These Auth0 scopes gate the **operator CLI**, not end-user apps and not `kf_...`
 
 Permission names in Auth0 must match exactly (no trailing spaces). API-key secrets still never leave the local KMS envelope path to Auth0.
 
-**Non-goals:** Auth0 is not used to authenticate callers of `serve` (those use `Authorization: Bearer kf_...`). Auth0 is not a cloud KMS and does not wrap or store API-key material.
+**Non-goals:** Auth0 is not used to authenticate callers of `serve` (those use `Authorization: Bearer kf_...`). Auth0 does not wrap or store API-key material.
 
 Access-token rejection rules: [Token diet](README.md#token-diet). Full variable list: [Environment](README.md#environment).
