@@ -125,6 +125,11 @@ class SetupTests(unittest.TestCase):
         self.assertNotIn("user-secret", body)
         self.assertEqual(result["sub"], "auth0|ada")
 
+    def test_bare_keyforge_needs_a_command(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            cli.main([])
+        self.assertEqual(cm.exception.code, 2)
+
     def test_cli_refuses_noninteractive_setup(self):
         rc, out, err = _run("setup")
         self.assertEqual(rc, 6)

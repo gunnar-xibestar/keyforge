@@ -431,8 +431,6 @@ def main(argv=None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     setup_mod.load_env_file()
-    if not argv:
-        argv = ["setup"]
     parser = build_parser()
     args = parser.parse_args(argv)
     for f in ("dry_run", "yes"):
