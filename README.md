@@ -35,6 +35,8 @@ Store: `--store PATH`, `$KEYFORGE_STORE`, or `~/.keyforge/store.json`. Writes ar
 
 Without Auth0 configured, you are done — every command trusts the OS user.
 
+`keyforge` with no command (or `keyforge setup`) is the boot prompt. It asks for `KEYFORGE_KMS_PROVIDER` and prints where each value comes from, then asks whether to set up Auth0. Skipping Auth0 prints the restriction: the OS user is trusted and there is no operator scope gate. Continuing asks for the three variables below (with dashboard locations), then a username and a password, in that order, and prints `auth status`. The password is not saved. Other values are written to `~/.keyforge/keyforge.env` (mode 0600). Later commands load that file when a variable is unset; `source ~/.keyforge/keyforge.env` exports them into your shell. `auth login` remains the device-code flow.
+
 ### 2. Optional Auth0 login (for demo)
 
 Auth0 is **off** until all three of `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE` are set. Setting only some of them is an error.
@@ -89,6 +91,7 @@ Full variable list: [Environment](#environment). Access-token size rules: [Token
 | `policy show` / `policy set FIELD VALUE` / `policy reset` | org rules |
 | `export [-o FILE] [--include-audit]` / `import FILE [--overwrite] [--allow-unrevoke] [--dry-run]` | hashes and envelopes, never plaintext |
 | `purge [--older-than 7d] [--include-revoked] [--dry-run] [--yes]` | delete expired and post-grace keys |
+| `setup` | boot prompt: KMS provider, optional Auth0, then username and password. `keyforge` with no command does the same. Password is not saved |
 | `auth login [--from-file FILE]` / `auth status` / `auth logout` | device login, principal status, logout. Status never prints tokens. With Auth0 unset, status reports auth disabled |
 | `kms status` | show active KMS provider and whether it is ready (never prints the PKCS#11 PIN). Auth login does not use the KMS |
 | `serve [--host 127.0.0.1] [--port 8787]` | **demo** HTTP server: clients authenticate only with `Authorization: Bearer kf_...`. Not for production |

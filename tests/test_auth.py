@@ -126,6 +126,22 @@ class AuthTests(unittest.TestCase):
                                   "token_type": "Bearer", **token_fields}
         return auth.device_login(prompt=lambda _m: None, sleep=lambda _s: None)
 
+    def test_password_login_sends_username_then_uses_token(self):
+        token = self.sign(self.payload(gty="password"))
+        self.opener.token_body = {"access_token": token, "expires_in": 600, "token_type": "Bearer"}
+        principal = auth.password_login("ada@example.test", "s3cret-value")
+        self.assertEqual(principal.sub, "auth0|alice")
+        url, data = self.opener.calls[-2] if self.opener.calls[-1][0].endswith("jwks.json") else self.opener.calls[-1]
+        self.assertTrue(url.endswith("/oauth/token"))
+        self.assertIn(b"ada%40example.test", data)
+        self.assertIn(b"password-realm", data)
+        self.assertIn(b"s3cret-value", data)
+        self.opener.token_body = {"error": "invalid_grant", "error_description": "wrong s3cret-value"}
+        with self.assertRaises(AuthError) as cm:
+            auth.password_login("ada@example.test", "s3cret-value")
+        self.assertNotIn("s3cret-value", str(cm.exception))
+        self.assertIn("[redacted]", str(cm.exception))
+
     def test_login_stores_lean_token_and_drops_id_token(self):
         token = self.sign(self.payload())
         principal = self._login(token)

@@ -6,6 +6,7 @@ from .errors import KeyForgeError, Aborted, ValidationError
 from .models import parse_duration, now, parse_iso, iso
 from .store import Store, resolve_path
 from . import uninstall as uninstall_mod
+from . import setup as setup_mod
 
 EXIT_OK, EXIT_ERR, EXIT_USAGE, EXIT_NOTFOUND, EXIT_VERIFY, EXIT_POLICY, EXIT_ABORT, EXIT_TAMPER, EXIT_LOCKED = 0, 1, 2, 3, 4, 5, 6, 7, 8
 
@@ -314,6 +315,8 @@ def build_parser():
     un.add_argument("--include-configured", action="store_true",
                     help="also delete KEYFORGE_STORE, token, KMS, and audit HMAC files outside ~/.keyforge")
 
+    add("setup", cmd_setup, "boot: choose the KMS provider, optionally configure Auth0, then username and password")
+
     km = add("kms", cmd_kms, "show which KMS provider is active (create/reveal use it; auth does not)")
     kmsub = km.add_subparsers(dest="kms_cmd", required=True)
     kmsub.add_parser("status", parents=[sub_common], help="provider, readiness, and config (never prints the PIN)")
@@ -337,6 +340,19 @@ def cmd_uninstall(a, st=None):
         lines += [f"  {p}" for p in result["skipped"]]
     lines.append(f"package still installed; run: {result['package']}")
     _out(a, result, "\n".join(lines))
+
+
+def cmd_setup(a, st=None):
+    """Interactive boot. Does not hold the store lock. Password is not saved."""
+    import getpass
+    if not sys.stdin.isatty():
+        raise Aborted("setup reads from the terminal; refusing non-interactive stdin")
+    result = setup_mod.run(
+        read_line=input,
+        read_secret=getpass.getpass,
+        echo=lambda line: print(line, file=sys.stderr),
+    )
+    _out(a, result)
 
 
 def cmd_kms(a, st=None):
@@ -412,6 +428,11 @@ def cmd_auth(a, st=None):
     _out(a, info, text)
 
 def main(argv=None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    setup_mod.load_env_file()
+    if not argv:
+        argv = ["setup"]
     parser = build_parser()
     args = parser.parse_args(argv)
     for f in ("dry_run", "yes"):
@@ -429,6 +450,8 @@ def main(argv=None) -> int:
                 return cmd_uninstall(args) or EXIT_OK
             if args.cmd == "kms":
                 return cmd_kms(args) or EXIT_OK
+            if args.cmd == "setup":
+                return cmd_setup(args) or EXIT_OK
             if args.cmd == "serve":
                 # Do not hold the store lock for the life of the process; each request locks briefly.
                 return cmd_serve(args) or EXIT_OK
