@@ -193,7 +193,7 @@ class SetupTests(unittest.TestCase):
         newer = write("new", 2_000)
         answers = iter([
             "pkcs11",
-            "",
+            "2",
             "/tmp/no-such-libsofthsm2.so",
             "keyforge",
             "keyforge-kek",
@@ -207,13 +207,16 @@ class SetupTests(unittest.TestCase):
             return next(answers)
 
         setup_mod.run(read_line=read_line, read_secret=lambda _p: "pin-secret", echo=self._echo)
-        self.assertIn("Reuse the oldest token? [Y/n] ", prompts)
+        self.assertIn("Select a number to delete, c to create, or Enter to reuse main: ", prompts)
         self.assertNotIn("Press Enter when the new token exists: ", prompts)
         self.assertTrue(oldest.is_dir())
         self.assertFalse(newer.exists())
         text = "\n".join(self.lines)
         self.assertIn("Create a new token:", text)
-        self.assertIn("removed 1 newer token", text)
+        self.assertIn("deleted ", text)
+        self.assertIn("Reuse uses oldest token. (main)", text)
+        self.assertIn("a new label", text)
+        self.assertIn("limited number of slots", text)
 
     def test_blank_pin_asks_again(self):
         answers = iter(["pkcs11", "", "/tmp/no-such-libsofthsm2.so", "keyforge", "keyforge-kek", "", "n"])
