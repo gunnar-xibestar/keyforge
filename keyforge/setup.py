@@ -154,8 +154,6 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         if key_file:
             saved["KEYFORGE_KMS_KEY_FILE"] = key_file
     elif choice == "pkcs11":
-        echo("Prepare SoftHSM before the module path. Run this in another terminal:")
-        echo("")
         echo("  mkdir -p \"$HOME/.keyforge/softhsm/tokens\"")
         echo("  printf 'directories.tokendir = %s\\nobjectstore.backend = file\\nlog.level = ERROR\\n' \\")
         echo("    \"$HOME/.keyforge/softhsm/tokens\" > \"$HOME/.keyforge/softhsm/softhsm2.conf\"")
