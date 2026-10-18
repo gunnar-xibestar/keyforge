@@ -20,7 +20,7 @@ real session. Both expose ``wrap`` / ``unwrap`` and ``Pkcs11Kms`` does not
 care which one it holds.
 """
 from __future__ import annotations
-import hashlib, hmac, os, secrets, stat
+import hashlib, hmac, os, secrets, stat, sys
 from pathlib import Path
 from .errors import KeyForgeError
 
@@ -190,6 +190,15 @@ class FakePkcs11Token:
         return dek
 
 
+def _new_aes_key_notice(label: str) -> str:
+    """Text printed when a missing token AES key is created."""
+    return (
+        f"keyforge: generated a new AES-256 key labeled {label!r} on the token.\n"
+        "This key cannot read secrets wrapped by an older key. "
+        "The label is only a name. The old key material is not in the new key."
+    )
+
+
 class Pkcs11Token:
     """Real PKCS#11 session. AES-256-GCM under a token AES key.
 
@@ -199,8 +208,8 @@ class Pkcs11Token:
     - ``KEYFORGE_PKCS11_TOKEN``: token label
     - ``KEYFORGE_PKCS11_PIN``: user PIN. Read from the environment only.
       Never written to the store, logs, or error text.
-    - ``KEYFORGE_PKCS11_KEY_LABEL``: AES key label on the token
-    - ``KEYFORGE_PKCS11_CREATE_KEY=1``: generate that AES-256 key if it is missing
+    - ``KEYFORGE_PKCS11_KEY_LABEL``: AES key label on the token. A missing key
+      is generated on first use. A new key cannot read secrets wrapped by an older one.
 
     SoftHSM also needs ``SOFTHSM2_CONF`` pointing at its config. A hardware
     module uses the same variables with its own ``.so``.
@@ -210,7 +219,13 @@ class Pkcs11Token:
         if not module_path or not token_label or not key_label:
             raise KeyForgeError("PKCS#11 module, token label, and key label are required")
         if pin is None or pin == "":
-            raise KeyForgeError("KEYFORGE_PKCS11_PIN is required for the PKCS#11 provider")
+            from .softhsm import matching_tokens, setup_instructions
+            conf = os.environ.get("SOFTHSM2_CONF") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
+            raise KeyForgeError(
+                "KEYFORGE_PKCS11_PIN is required. It is the user PIN from "
+                "softhsm2-util --init-token --pin, not the SO PIN.\n"
+                + setup_instructions(no_token=not matching_tokens("keyforge", conf))
+            )
         self.module_path = module_path
         self.token_label = token_label
         self.key_label = key_label
@@ -246,7 +261,7 @@ class Pkcs11Token:
         try:
             lib = pkcs11.lib(self.module_path)
             token = lib.get_token(token_label=self.token_label)
-            return token.open(rw=True, user_pin=self._pin)
+            return _open_token(token, self._pin)
         except KeyForgeError:
             raise
         except Exception as e:
@@ -263,11 +278,7 @@ class Pkcs11Token:
             raise KeyForgeError(f"PKCS#11 token has more than one key labeled {self.key_label!r}")
         if len(found) == 1:
             return found[0]
-        if os.environ.get("KEYFORGE_PKCS11_CREATE_KEY", "").strip().lower() not in ("1", "true", "yes"):
-            raise KeyForgeError(
-                f"PKCS#11 token has no AES key labeled {self.key_label!r}. "
-                "Create one, or set KEYFORGE_PKCS11_CREATE_KEY=1 to generate a non-exportable AES-256 key."
-            )
+        print(_new_aes_key_notice(self.key_label), file=sys.stderr)
         return session.generate_key(
             KeyType.AES, 256, label=self.key_label, store=True,
             template={Attribute.SENSITIVE: True, Attribute.EXTRACTABLE: False,
@@ -353,15 +364,68 @@ class Pkcs11Kms:
         return self.token.unwrap(self.key_label, blob, aad)
 
 
+def _pin_mismatch(exc: BaseException) -> bool:
+    return type(exc).__name__ == "PinIncorrect"
+
+
+def _report_pin_mismatch() -> None:
+    from .softhsm import matching_tokens, setup_instructions
+    conf = os.environ.get("SOFTHSM2_CONF") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
+    print("mismatch error (pin failed after 3 attempts)\n", file=sys.stderr)
+    print(setup_instructions(no_token=not matching_tokens("keyforge", conf)), file=sys.stderr)
+
+
+def _open_token(token, pin: str, read_secret=None):
+    """Log in with ``pin``. A wrong PIN may be retried twice more on a terminal."""
+    current = pin
+    for attempt in range(1, 4):
+        try:
+            return token.open(rw=True, user_pin=current)
+        except Exception as e:
+            if not _pin_mismatch(e):
+                raise
+            if attempt == 3:
+                _report_pin_mismatch()
+                raise KeyForgeError("mismatch error (pin failed after 3 attempts)") from None
+            if not sys.stdin.isatty():
+                raise KeyForgeError("no terminal") from None
+            current = read_user_pin(read_secret)
+    raise KeyForgeError("mismatch error (pin failed after 3 attempts)")
+
+
+def read_user_pin(read_secret=None) -> str:
+    """Ask for the token user PIN. A blank entry prints ``input blank`` and asks again.
+
+    The value is kept in this process only. It is not written to ``keyforge.env``.
+    """
+    import getpass
+    read_secret = read_secret or getpass.getpass
+    while True:
+        pin = read_secret("KEYFORGE_PKCS11_PIN: ")
+        if pin:
+            os.environ["KEYFORGE_PKCS11_PIN"] = pin
+            return pin
+        print("input blank", file=sys.stderr)
+
+
 def pkcs11_from_env() -> Pkcs11Kms:
     module = os.environ.get("KEYFORGE_PKCS11_MODULE", "")
     token = os.environ.get("KEYFORGE_PKCS11_TOKEN", "")
     pin = os.environ.get("KEYFORGE_PKCS11_PIN", "")
     label = os.environ.get("KEYFORGE_PKCS11_KEY_LABEL", "")
+    if not pin and module and token and label:
+        if not sys.stdin.isatty():
+            raise KeyForgeError("no terminal")
+        pin = read_user_pin()
     missing = [n for n, v in (("KEYFORGE_PKCS11_MODULE", module), ("KEYFORGE_PKCS11_TOKEN", token),
                               ("KEYFORGE_PKCS11_PIN", pin), ("KEYFORGE_PKCS11_KEY_LABEL", label)) if not v]
     if missing:
-        raise KeyForgeError("PKCS#11 provider is missing " + ", ".join(missing))
+        message = "PKCS#11 provider is missing " + ", ".join(missing)
+        if "KEYFORGE_PKCS11_PIN" in missing and not (module and token and label):
+            from .softhsm import matching_tokens, setup_instructions
+            conf = os.environ.get("SOFTHSM2_CONF") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
+            message += "\n" + setup_instructions(no_token=not matching_tokens("keyforge", conf))
+        raise KeyForgeError(message)
     return Pkcs11Kms(Pkcs11Token(module, token, pin, label), label)
 
 
@@ -381,6 +445,8 @@ def provider_for(store=None):
 
 def format_status(info: dict) -> list[str]:
     """Text of ``keyforge kms status``. ``result`` is success only when ``ready`` is true."""
+    if info.get("no_terminal"):
+        return ["no terminal"]
     failed = not info.get("ready")
     lines = ["result: failure" if failed else "result: success",
              f"provider: {info.get('provider')}", f"ready: {info.get('ready')}"]
@@ -400,6 +466,8 @@ def format_status(info: dict) -> list[str]:
             lines.append(f"SOFTHSM2_CONF: {info['softhsm2_conf']}")
     if info.get("missing"):
         lines.append("missing: " + ", ".join(info["missing"]))
+    if info.get("softhsm_setup"):
+        lines.extend(str(info["softhsm_setup"]).splitlines())
     if info.get("error"):
         lines.append(f"error: {info['error']}")
     for warning in info.get("warnings") or []:
@@ -428,6 +496,12 @@ def status(store_path: str | None = None) -> dict:
         token = os.environ.get("KEYFORGE_PKCS11_TOKEN", "")
         label = os.environ.get("KEYFORGE_PKCS11_KEY_LABEL", "")
         pin_set = bool(os.environ.get("KEYFORGE_PKCS11_PIN", ""))
+        if not pin_set and module and token and label:
+            if not sys.stdin.isatty():
+                info["no_terminal"] = True
+                return info
+            read_user_pin()
+            pin_set = True
         try:
             import pkcs11  # noqa: F401
             binding = True
@@ -453,6 +527,9 @@ def status(store_path: str | None = None) -> dict:
             missing.append("KEYFORGE_PKCS11_TOKEN")
         if not pin_set:
             missing.append("KEYFORGE_PKCS11_PIN")
+            from .softhsm import matching_tokens, setup_instructions
+            conf = os.environ.get("SOFTHSM2_CONF") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
+            info["softhsm_setup"] = setup_instructions(no_token=not matching_tokens("keyforge", conf))
         if not label:
             missing.append("KEYFORGE_PKCS11_KEY_LABEL")
         if missing:

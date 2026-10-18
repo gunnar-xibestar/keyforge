@@ -1,6 +1,8 @@
 """PKCS#11 provider against SoftHSM when the module is installed, plus the documented env contract."""
-import os, shutil, subprocess, tempfile, unittest
+import io, os, shutil, subprocess, tempfile, unittest
+from contextlib import redirect_stderr
 from pathlib import Path
+from unittest import mock
 
 from keyforge import crypto, service as svc
 from keyforge.errors import KeyForgeError
@@ -80,6 +82,34 @@ class SoftHsmTests(unittest.TestCase):
         with self.assertRaises(KeyForgeError) as cm:
             crypto.open_secret(env, key_id=k.id, kms=provider_for(self.store))
         self.assertIn("authentication", str(cm.exception).lower())
+
+
+class PinAttemptTests(unittest.TestCase):
+    def test_third_wrong_pin_prints_mismatch_and_setup(self):
+        from keyforge.kms import _open_token
+        pins = iter(["second", "third"])
+
+        class Token:
+            def open(self, rw, user_pin):
+                raise type("PinIncorrect", (Exception,), {})("wrong")
+
+        err = io.StringIO()
+        with mock.patch("sys.stdin.isatty", return_value=True), redirect_stderr(err):
+            with self.assertRaises(KeyForgeError) as cm:
+                _open_token(Token(), "first", read_secret=lambda _p: next(pins))
+        self.assertEqual(str(cm.exception), "mismatch error (pin failed after 3 attempts)")
+        text = err.getvalue()
+        self.assertIn("mismatch error (pin failed after 3 attempts)\n\nSoftHSM setup:", text)
+        self.assertIn("warning: that library runs inside KeyForge", text)
+
+
+class NewAesKeyNoticeTests(unittest.TestCase):
+    def test_warns_that_a_new_key_cannot_read_old_secrets(self):
+        from keyforge.kms import _new_aes_key_notice
+        text = _new_aes_key_notice("keyforge-kek")
+        self.assertIn("generated a new AES-256 key labeled 'keyforge-kek'", text)
+        self.assertIn("cannot read secrets wrapped by an older key", text)
+        self.assertIn("The label is only a name", text)
 
 
 class Pkcs11ConfigTests(unittest.TestCase):

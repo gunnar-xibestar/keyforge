@@ -1,5 +1,6 @@
 """``keyforge kms status`` reports the configured provider without using Auth0."""
 import io, os, tempfile, unittest
+from unittest import mock
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -56,6 +57,33 @@ class KmsStatusTests(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         self.assertIn('"provider": "pkcs11"', out)
         self.assertIn("KEYFORGE_PKCS11_MODULE", out)
+        self.assertIn("softhsm2-util --init-token", out)
+        self.assertIn("SO PIN is only for --so-pin", out)
+
+    def test_status_prompts_for_a_missing_pin_on_a_tty(self):
+        os.environ["KEYFORGE_KMS_PROVIDER"] = "pkcs11"
+        os.environ["KEYFORGE_PKCS11_MODULE"] = __file__
+        os.environ["KEYFORGE_PKCS11_TOKEN"] = "keyforge"
+        os.environ["KEYFORGE_PKCS11_KEY_LABEL"] = "keyforge-kek"
+        secrets = iter(["", "s3cret"])
+        err = io.StringIO()
+        with mock.patch("sys.stdin.isatty", return_value=True), \
+             mock.patch("getpass.getpass", side_effect=lambda _p: next(secrets)), \
+             redirect_stderr(err):
+            info = kms.status()
+        self.assertTrue(info["pin_set"])
+        self.assertNotIn("softhsm_setup", info)
+        self.assertIn("input blank", err.getvalue())
+        self.assertEqual(os.environ["KEYFORGE_PKCS11_PIN"], "s3cret")
+
+    def test_missing_pin_without_a_terminal_prints_no_terminal_only(self):
+        os.environ["KEYFORGE_KMS_PROVIDER"] = "pkcs11"
+        os.environ["KEYFORGE_PKCS11_MODULE"] = __file__
+        os.environ["KEYFORGE_PKCS11_TOKEN"] = "keyforge"
+        os.environ["KEYFORGE_PKCS11_KEY_LABEL"] = "keyforge-kek"
+        with mock.patch("sys.stdin.isatty", return_value=False):
+            info = kms.status()
+        self.assertEqual(kms.format_status(info), ["no terminal"])
 
     def test_memory_ready(self):
         os.environ["KEYFORGE_KMS_PROVIDER"] = "memory"
