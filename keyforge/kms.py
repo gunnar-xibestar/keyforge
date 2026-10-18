@@ -244,12 +244,6 @@ class Pkcs11Token:
                 "PKCS#11 provider is not ready: " + "; ".join(problems) + ". See README PKCS#11."
             )
         try:
-            self.removed_tokens = []
-            if "softhsm" in os.path.basename(self.module_path).lower():
-                from .softhsm import drop_newer_tokens
-                self.removed_tokens = drop_newer_tokens(
-                    self.token_label, os.environ.get("SOFTHSM2_CONF")
-                )
             lib = pkcs11.lib(self.module_path)
             token = lib.get_token(token_label=self.token_label)
             return token.open(rw=True, user_pin=self._pin)
@@ -434,7 +428,6 @@ def status(store_path: str | None = None) -> dict:
         if missing:
             info["missing"] = missing
             return info
-        kms = None
         try:
             kms = pkcs11_from_env()
             with kms.token._session():
@@ -442,13 +435,6 @@ def status(store_path: str | None = None) -> dict:
             info["ready"] = True
         except KeyForgeError as e:
             info["error"] = str(e)
-        removed = getattr(getattr(kms, "token", None), "removed_tokens", None) or []
-        if removed:
-            info["removed_tokens"] = removed
-            info.setdefault("warnings", []).append(
-                "removed newer SoftHSM tokens with this label and kept the oldest; "
-                "secrets wrapped by a deleted token cannot be opened"
-            )
         return info
     if kind == "local":
         path = os.environ.get("KEYFORGE_KMS_KEY_FILE")

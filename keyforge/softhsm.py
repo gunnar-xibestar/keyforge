@@ -56,12 +56,11 @@ def _inside(root: Path, path: Path) -> bool:
     return True
 
 
-def drop_newer_tokens(label: str, conf_path: str | None) -> list[str]:
-    """Delete newer SoftHSM token directories with ``label``. Keep the oldest.
+def matching_tokens(label: str, conf_path: str | None) -> list[str]:
+    """Token directories labeled ``label``, oldest ``token.object`` first.
 
-    Age is ``token.object`` mtime. Returns the removed directory paths. Does
-    nothing when the config or tokendir is missing, or when fewer than two
-    tokens match. Symlinks are skipped.
+    An empty list means the config, tokendir, or label is missing. Symlinks
+    are skipped.
     """
     root = tokendir(conf_path)
     if root is None or not root.is_dir() or root.is_symlink():
@@ -86,18 +85,30 @@ def drop_newer_tokens(label: str, conf_path: str | None) -> list[str]:
             continue
         if token_object_has_label(data, label):
             matches.append((mtime, str(child)))
+    matches.sort()
+    return [path for _, path in matches]
+
+
+def drop_newer_tokens(label: str, conf_path: str | None) -> list[str]:
+    """Delete newer SoftHSM token directories with ``label``. Keep the oldest.
+
+    Age is ``token.object`` mtime. Returns the removed directory paths. Does
+    nothing when the config or tokendir is missing, or when fewer than two
+    tokens match. Symlinks are skipped.
+    """
+    matches = matching_tokens(label, conf_path)
     if len(matches) < 2:
         return []
-    matches.sort()
     removed: list[str] = []
-    for _, path in matches[1:]:
+    root = tokendir(conf_path)
+    for path in matches[1:]:
         target = Path(path)
-        if target.is_symlink() or not _inside(root, target):
+        if root is None or target.is_symlink() or not _inside(root, target):
             continue
         shutil.rmtree(target)
         removed.append(path)
     if removed:
-        kept = matches[0][1]
+        kept = matches[0]
         print(
             f"keyforge: removed {len(removed)} newer SoftHSM token(s) labeled {label!r}; "
             f"kept the oldest at {kept}",
