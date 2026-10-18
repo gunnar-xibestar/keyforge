@@ -237,9 +237,10 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         raise KeyForgeError(f"unknown KEYFORGE_KMS_PROVIDER {choice!r}; choose from {', '.join(_PROVIDERS)}")
     saved: dict[str, str] = {"KEYFORGE_KMS_PROVIDER": choice}
     echo("")
-    echo(f"selected: {choice}")
-    echo(_PROVIDER_TEXT[choice])
-    echo("")
+    if choice != "pkcs11":
+        echo(f"selected: {choice}")
+        echo(_PROVIDER_TEXT[choice])
+        echo("")
 
     if choice == "local":
         echo("Leave blank to keep the key at <store-dir>/kms-master.key.")
@@ -268,7 +269,11 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
             _ask(read_line, "Press Enter when the new token exists: ")
         echo("")
         module = _ask(read_line, "KEYFORGE_PKCS11_MODULE [/usr/lib/softhsm/libsofthsm2.so]: ") or "/usr/lib/softhsm/libsofthsm2.so"
-        token = _ask(read_line, "KEYFORGE_PKCS11_TOKEN [keyforge]: ") or "keyforge"
+        if reuse:
+            token = "keyforge"
+            echo("Token label: keyforge")
+        else:
+            token = _ask(read_line, "KEYFORGE_PKCS11_TOKEN [keyforge]: ") or "keyforge"
         echo("PIN is the token user PIN from softhsm2-util --init-token --pin, not the SO PIN.")
         saved_pin = os.environ.get("KEYFORGE_PKCS11_PIN", "")
         while True:
@@ -276,8 +281,14 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
             if pin:
                 break
             echo("input blank")
-        label = _ask(read_line, "KEYFORGE_PKCS11_KEY_LABEL [keyforge-kek]: ") or "keyforge-kek"
         aes_labels = list_aes_labels(module, token, pin)
+        if aes_labels is not None and "keyforge-kek" in aes_labels:
+            label = "keyforge-kek"
+            echo("Key label: keyforge-kek")
+            asked_label = False
+        else:
+            label = _ask(read_line, "KEYFORGE_PKCS11_KEY_LABEL [keyforge-kek]: ") or "keyforge-kek"
+            asked_label = True
         if aes_labels is not None and label not in aes_labels and aes_labels:
             removed = destroy_aes_labels(module, token, pin, aes_labels)
             for name in removed:
@@ -287,7 +298,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
                 read_line, echo, aes_labels, label,
                 lambda names: destroy_aes_labels(module, token, pin, names),
             )
-            if not saved_pin:
+            if asked_label and not saved_pin:
                 echo("The new key label you just entered will only be a name. On the first create, rotate, or reveal, if no AES key has that name, KeyForge generates a new one.")
                 echo("warning: a new key cannot read secrets wrapped by an older key. The label is only a name. The old key material is not in the new key.")
         conf = _ask(read_line, f"SOFTHSM2_CONF [{default_conf}]: ") or default_conf
