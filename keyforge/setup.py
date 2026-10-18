@@ -237,9 +237,10 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         raise KeyForgeError(f"unknown KEYFORGE_KMS_PROVIDER {choice!r}; choose from {', '.join(_PROVIDERS)}")
     saved: dict[str, str] = {"KEYFORGE_KMS_PROVIDER": choice}
     echo("")
-    echo(f"selected: {choice}")
-    echo(_PROVIDER_TEXT[choice])
-    echo("")
+    if choice != "pkcs11":
+        echo(f"selected: {choice}")
+        echo(_PROVIDER_TEXT[choice])
+        echo("")
 
     if choice == "local":
         echo("Leave blank to keep the key at <store-dir>/kms-master.key.")
