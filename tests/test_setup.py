@@ -218,6 +218,21 @@ class SetupTests(unittest.TestCase):
         self.assertIn("a new label", text)
         self.assertIn("limited number of slots", text)
 
+    def test_aes_menu_cannot_delete_keyforge_kek(self):
+        deleted = []
+        answers = iter(["1", "2", ""])
+        lines = []
+
+        def delete(names):
+            deleted.extend(names)
+            return names
+
+        setup_mod._aes_key_menu(
+            lambda _p: next(answers), lines.append, ["keyforge-kek", "old"], "keyforge-kek", delete)
+        self.assertEqual(deleted, ["old"])
+        self.assertIn("keyforge-kek cannot be deleted.", lines)
+        self.assertIn("deleted old", lines)
+
     def test_blank_pin_asks_again(self):
         answers = iter(["pkcs11", "", "/tmp/no-such-libsofthsm2.so", "keyforge", "keyforge-kek", "", "n"])
         secrets = iter(["", "pin-secret"])

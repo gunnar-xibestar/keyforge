@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import auth
 from .errors import AuthError, KeyForgeError
-from .kms import format_status, status as kms_status
+from .kms import destroy_aes_labels, format_status, list_aes_labels, status as kms_status
 from .softhsm import delete_token, matching_tokens, setup_instructions
 
 _PROVIDERS = ("local", "pkcs11", "memory")
@@ -183,6 +183,32 @@ def _token_menu(read_line, echo, paths: list[str], conf: str) -> bool:
         echo("That number is not a token in this list.")
 
 
+def _aes_key_menu(read_line, echo, labels: list[str], protected: str, delete) -> None:
+    """Delete any AES key except ``protected``. ``delete`` removes labels and returns those removed."""
+    remaining = list(labels)
+    while True:
+        echo("AES keys on the token:")
+        for i, name in enumerate(remaining, start=1):
+            note = " (cannot be deleted)" if name == protected else ""
+            echo(f"  {i}. {name}{note}")
+        choice = _ask(read_line, "Select a number to delete, or Enter to continue: ")
+        if not choice:
+            return
+        if not choice.isdigit() or not 1 <= int(choice) <= len(remaining):
+            echo("That number is not a key in this list.")
+            continue
+        name = remaining[int(choice) - 1]
+        if name == protected:
+            echo(f"{protected} cannot be deleted.")
+            continue
+        for removed in delete([name]):
+            echo(f"deleted {removed}")
+            if removed in remaining:
+                remaining.remove(removed)
+        if len(remaining) == 1 and remaining[0] == protected:
+            return
+
+
 def _yes(read_line, prompt: str, *, default: bool = False) -> bool:
     ans = _ask(read_line, prompt).lower()
     if not ans:
@@ -244,14 +270,26 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         module = _ask(read_line, "KEYFORGE_PKCS11_MODULE [/usr/lib/softhsm/libsofthsm2.so]: ") or "/usr/lib/softhsm/libsofthsm2.so"
         token = _ask(read_line, "KEYFORGE_PKCS11_TOKEN [keyforge]: ") or "keyforge"
         echo("PIN is the token user PIN from softhsm2-util --init-token --pin, not the SO PIN.")
+        saved_pin = os.environ.get("KEYFORGE_PKCS11_PIN", "")
         while True:
             pin = read_secret("KEYFORGE_PKCS11_PIN: ")
             if pin:
                 break
             echo("input blank")
         label = _ask(read_line, "KEYFORGE_PKCS11_KEY_LABEL [keyforge-kek]: ") or "keyforge-kek"
-        echo("A missing AES key is generated on the token the first time it is used.")
-        echo("warning: a new key cannot read secrets wrapped by an older key. The label is only a name. The old key material is not in the new key.")
+        aes_labels = list_aes_labels(module, token, pin)
+        if aes_labels is not None and label not in aes_labels and aes_labels:
+            removed = destroy_aes_labels(module, token, pin, aes_labels)
+            for name in removed:
+                echo(f"deleted {name}")
+        elif aes_labels is not None and label in aes_labels:
+            _aes_key_menu(
+                read_line, echo, aes_labels, label,
+                lambda names: destroy_aes_labels(module, token, pin, names),
+            )
+            if not saved_pin:
+                echo("The new key label you just entered will only be a name. On the first create, rotate, or reveal, if no AES key has that name, KeyForge generates a new one.")
+                echo("warning: a new key cannot read secrets wrapped by an older key. The label is only a name. The old key material is not in the new key.")
         conf = _ask(read_line, f"SOFTHSM2_CONF [{default_conf}]: ") or default_conf
         saved.update({
             "KEYFORGE_PKCS11_MODULE": module,
