@@ -63,6 +63,8 @@ def env_path() -> Path:
 _HIDDEN_VALUES = frozenset({
     "KEYFORGE_PKCS11_PIN", "AUTH0_CLIENT_SECRET", "KEYFORGE_KMS_MEMORY_KEY",
 })
+# Filled by load_env_file. Each item is key, environment value, file value, path.
+conflicts: list[dict] = []
 
 
 def load_env_file(path: Path | None = None) -> None:
@@ -72,6 +74,7 @@ def load_env_file(path: Path | None = None) -> None:
     stderr, so a shell export cannot silently hide ``keyforge.env``.
     """
     path = path or env_path()
+    conflicts.clear()
     try:
         text = path.read_text()
     except FileNotFoundError:
@@ -104,13 +107,18 @@ def load_env_file(path: Path | None = None) -> None:
             continue
         if current == value:
             continue
-        if key in _HIDDEN_VALUES:
-            detail = "a different value"
-        else:
-            detail = f"{value!r}"
+        shown = "a different value" if key in _HIDDEN_VALUES else value
+        conflicts.append({"key": key, "environment": current, "file": shown, "path": str(path)})
         print(
-            f"keyforge: {key} is {current!r} from the environment; {path} has {detail}. "
-            "The environment value is used.",
+            "\n".join([
+                "failure: shell value hid keyforge.env",
+                f"  where: loading {path}",
+                f"  variable: {key}",
+                f"  environment: {current}",
+                f"  keyforge.env: {shown}",
+                "  used: environment",
+                f"  fix: unset {key}",
+            ]),
             file=sys.stderr,
         )
 
@@ -162,6 +170,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     for line in _BANNER.splitlines():
         echo(line)
     echo("")
+    echo("progress: KMS provider")
     echo("KMS provider (KEYFORGE_KMS_PROVIDER). Setup saves the answer; a bare assignment in a file is not enough.")
     echo("")
     for i, name in enumerate(_PROVIDERS):
@@ -187,6 +196,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         if key_file:
             saved["KEYFORGE_KMS_KEY_FILE"] = key_file
     elif choice == "pkcs11":
+        echo("progress: SoftHSM token")
         echo("  mkdir -p \"$HOME/.keyforge/softhsm/tokens\"")
         echo("  printf 'directories.tokendir = %s\\nobjectstore.backend = file\\nlog.level = ERROR\\n' \\")
         echo("    \"$HOME/.keyforge/softhsm/tokens\" > \"$HOME/.keyforge/softhsm/softhsm2.conf\"")
@@ -218,6 +228,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
             saved["KEYFORGE_PKCS11_CREATE_KEY"] = create
 
     echo("")
+    echo("progress: Auth0")
     echo("Auth0 operator login is off until AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_AUDIENCE are all set.")
     echo("")
     if not _yes(read_line, "Set up Auth0 now? [Y/n] ", default=True):
@@ -231,6 +242,8 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
             os.environ[key] = value
         info = auth.status()
         echo("")
+        echo("result: success")
+        echo("  saved the KMS choice. Auth0 was skipped.")
         echo(f"saved: {path}")
         _marks(echo, 5)
         return {"kms_provider": choice, "auth": info, "env_file": str(path)}
@@ -268,6 +281,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
 
     echo("")
     echo("")
+    echo("progress: login")
     echo("Login. Username first, then password.")
     echo("")
     echo("Username is the database user (User Management → Users), usually the email. It is not the Client ID.")
@@ -281,8 +295,8 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     principal = login(username, password)
     path = _write_env(saved)
     echo("")
-    echo(f"logged in as {principal.sub}")
-    echo("")
+    echo("result: success")
+    echo(f"  logged in as {principal.sub}")
     echo(f"saved: {path}")
     _marks(echo, 5)
     return {"kms_provider": choice, "auth": {"logged_in": True, "sub": principal.sub}, "env_file": str(path), "sub": principal.sub}

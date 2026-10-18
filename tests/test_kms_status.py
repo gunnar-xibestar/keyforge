@@ -38,6 +38,7 @@ class KmsStatusTests(unittest.TestCase):
         os.environ["KEYFORGE_STORE"] = store
         rc, out, err = _run("kms", "status")
         self.assertEqual(rc, 0, err)
+        self.assertIn("result: success", out)
         self.assertIn("provider: local", out)
         self.assertIn("ready: True", out)
         self.assertIn("kms-master.key", out)
@@ -60,6 +61,7 @@ class KmsStatusTests(unittest.TestCase):
         os.environ["KEYFORGE_KMS_PROVIDER"] = "memory"
         rc, out, err = _run("kms", "status")
         self.assertEqual(rc, 0, err)
+        self.assertIn("result: success", out)
         self.assertIn("provider: memory", out)
         self.assertIn("ready: True", out)
 
