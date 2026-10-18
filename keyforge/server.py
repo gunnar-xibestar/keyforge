@@ -18,6 +18,7 @@ ROUTES = {
     "/health": None,           # no auth
     "/whoami": (),             # any valid key
     "/packets": ("read:packets",),
+    "/admin": ("write:packets",),
 }
 
 
@@ -105,7 +106,7 @@ def serve(store_path: str, host: str = "127.0.0.1", port: int = 8787) -> int:
     httpd = ThreadingHTTPServer((host, port), make_handler(store_path))
     print(f"{BANNER}")
     print(f"demo server listening on http://{host}:{port}")
-    print("routes: GET /health (open), GET /whoami (any key), GET /packets (scope read:packets)")
+    print("routes: GET /health (open), GET /whoami (any key), GET /packets (scope read:packets), GET /admin (scope write:packets)")
     print("auth:   Authorization: Bearer <kf_... secret>")
     try:
         httpd.serve_forever()
