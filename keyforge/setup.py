@@ -205,7 +205,6 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     echo(f"logged in as {principal.sub}")
     echo(_status_text(info))
     echo(f"saved: {path}")
-    echo(f"source {path}")
     return {"kms_provider": choice, "auth": info, "env_file": str(path), "sub": principal.sub}
 
 
