@@ -371,7 +371,7 @@ def _pin_mismatch(exc: BaseException) -> bool:
 def _report_pin_mismatch() -> None:
     from .softhsm import matching_tokens, setup_instructions
     conf = os.environ.get("SOFTHSM2_CONF") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
-    print("mismatch", file=sys.stderr)
+    print("mismatch\n\nerror", file=sys.stderr)
     print(setup_instructions(no_token=not matching_tokens("keyforge", conf)), file=sys.stderr)
 
 

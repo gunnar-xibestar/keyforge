@@ -99,8 +99,7 @@ class PinAttemptTests(unittest.TestCase):
                 _open_token(Token(), "first", read_secret=lambda _p: next(pins))
         self.assertEqual(str(cm.exception), "mismatch")
         text = err.getvalue()
-        self.assertIn("mismatch\n", text)
-        self.assertIn("SoftHSM setup:", text)
+        self.assertIn("mismatch\n\nerror\nSoftHSM setup:", text)
         self.assertIn("warning: that library runs inside KeyForge", text)
 
 
