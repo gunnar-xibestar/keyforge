@@ -183,21 +183,41 @@ def _token_menu(read_line, echo, paths: list[str], conf: str) -> bool:
         echo("That number is not a token in this list.")
 
 
-def _aes_key_menu(read_line, echo, labels: list[str], protected: str, delete) -> None:
-    """Delete any AES key except ``protected``. ``delete`` removes labels and returns those removed."""
+def _aes_key_menu(read_line, echo, labels: list[str], protected: str, delete) -> str:
+    """Select one AES key, or delete any key except ``protected``.
+
+    A bare number selects that key. ``d`` plus a number deletes it.
+    Enter keeps ``protected`` when it is still in the list.
+    ``delete`` removes labels and returns those removed.
+    """
     remaining = list(labels)
     while True:
         echo("AES keys on the token:")
         for i, name in enumerate(remaining, start=1):
             note = " (cannot be deleted)" if name == protected else ""
             echo(f"  {i}. {name}{note}")
-        choice = _ask(read_line, "Select a number to delete, or Enter to continue: ")
+        if len(remaining) == 1 and remaining[0] == protected:
+            echo(f"Key label: {protected}")
+            return protected
+        choice = _ask(
+            read_line,
+            f"Select a number, d <number> to delete, or Enter to keep {protected}: ",
+        )
         if not choice:
-            return
-        if not choice.isdigit() or not 1 <= int(choice) <= len(remaining):
+            if protected in remaining:
+                echo(f"Key label: {protected}")
+                return protected
+            echo(f"Key label: {remaining[0]}")
+            return remaining[0]
+        delete_choice = choice.lower().startswith("d")
+        number = choice[1:].strip() if delete_choice else choice
+        if not number.isdigit() or not 1 <= int(number) <= len(remaining):
             echo("That number is not a key in this list.")
             continue
-        name = remaining[int(choice) - 1]
+        name = remaining[int(number) - 1]
+        if not delete_choice:
+            echo(f"Key label: {name}")
+            return name
         if name == protected:
             echo(f"{protected} cannot be deleted.")
             continue
@@ -205,8 +225,6 @@ def _aes_key_menu(read_line, echo, labels: list[str], protected: str, delete) ->
             echo(f"deleted {removed}")
             if removed in remaining:
                 remaining.remove(removed)
-        if len(remaining) == 1 and remaining[0] == protected:
-            return
 
 
 def _yes(read_line, prompt: str, *, default: bool = False) -> bool:
@@ -274,33 +292,38 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
             echo("Token label: keyforge")
         else:
             token = _ask(read_line, "KEYFORGE_PKCS11_TOKEN [keyforge]: ") or "keyforge"
-        echo("PIN is the token user PIN from softhsm2-util --init-token --pin, not the SO PIN.")
         saved_pin = os.environ.get("KEYFORGE_PKCS11_PIN", "")
+        aes_labels = list_aes_labels(module, token, saved_pin)
+        asked_label = False
+        if aes_labels:
+            label = _aes_key_menu(
+                read_line, echo, aes_labels, "keyforge-kek",
+                lambda names: destroy_aes_labels(module, token, saved_pin, names),
+            )
+        else:
+            label = _ask(read_line, "KEYFORGE_PKCS11_KEY_LABEL [keyforge-kek]: ") or "keyforge-kek"
+            asked_label = True
+        echo("PIN is the token user PIN from softhsm2-util --init-token --pin, not the SO PIN.")
         while True:
             pin = read_secret("KEYFORGE_PKCS11_PIN: ")
             if pin:
                 break
             echo("input blank")
-        aes_labels = list_aes_labels(module, token, pin)
-        if aes_labels is not None and "keyforge-kek" in aes_labels:
-            label = "keyforge-kek"
-            echo("Key label: keyforge-kek")
-            asked_label = False
-        else:
-            label = _ask(read_line, "KEYFORGE_PKCS11_KEY_LABEL [keyforge-kek]: ") or "keyforge-kek"
-            asked_label = True
-        if aes_labels is not None and label not in aes_labels and aes_labels:
-            removed = destroy_aes_labels(module, token, pin, aes_labels)
-            for name in removed:
-                echo(f"deleted {name}")
-        elif aes_labels is not None and label in aes_labels:
-            _aes_key_menu(
-                read_line, echo, aes_labels, label,
-                lambda names: destroy_aes_labels(module, token, pin, names),
-            )
-            if asked_label and not saved_pin:
-                echo("The new key label you just entered will only be a name. On the first create, rotate, or reveal, if no AES key has that name, KeyForge generates a new one.")
-                echo("warning: a new key cannot read secrets wrapped by an older key. The label is only a name. The old key material is not in the new key.")
+        if aes_labels is None:
+            aes_labels = list_aes_labels(module, token, pin)
+            if aes_labels is not None and label not in aes_labels and aes_labels:
+                removed = destroy_aes_labels(module, token, pin, aes_labels)
+                for name in removed:
+                    echo(f"deleted {name}")
+            elif aes_labels is not None and label in aes_labels:
+                chosen = _aes_key_menu(
+                    read_line, echo, aes_labels, label,
+                    lambda names: destroy_aes_labels(module, token, pin, names),
+                )
+                label = chosen
+        if asked_label and not saved_pin and aes_labels is not None and label in aes_labels:
+            echo("The new key label you just entered will only be a name. On the first create, rotate, or reveal, if no AES key has that name, KeyForge generates a new one.")
+            echo("warning: a new key cannot read secrets wrapped by an older key. The label is only a name. The old key material is not in the new key.")
         conf = _ask(read_line, f"SOFTHSM2_CONF [{default_conf}]: ") or default_conf
         saved.update({
             "KEYFORGE_PKCS11_MODULE": module,

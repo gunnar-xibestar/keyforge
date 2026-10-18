@@ -220,7 +220,7 @@ class SetupTests(unittest.TestCase):
         self.assertIn("limited number of slots", text)
 
     def test_existing_keyforge_kek_skips_the_label_prompt(self):
-        answers = iter(["pkcs11", "", "/tmp/no-such-libsofthsm2.so", "", "", "", "n"])
+        answers = iter(["pkcs11", "", "/tmp/no-such-libsofthsm2.so", "", "", "n"])
         prompts = []
 
         def read_line(prompt):
@@ -244,15 +244,16 @@ class SetupTests(unittest.TestCase):
 
     def test_aes_menu_cannot_delete_keyforge_kek(self):
         deleted = []
-        answers = iter(["1", "2", ""])
+        answers = iter(["d 1", "d 2", "1"])
         lines = []
 
         def delete(names):
             deleted.extend(names)
             return names
 
-        setup_mod._aes_key_menu(
+        chosen = setup_mod._aes_key_menu(
             lambda _p: next(answers), lines.append, ["keyforge-kek", "old"], "keyforge-kek", delete)
+        self.assertEqual(chosen, "keyforge-kek")
         self.assertEqual(deleted, ["old"])
         self.assertIn("keyforge-kek cannot be deleted.", lines)
         self.assertIn("deleted old", lines)
