@@ -110,15 +110,14 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     echo("")
     echo("")
     echo("")
-    echo("KeyForge")
-    echo("--------")
+    echo("KMS provider (KEYFORGE_KMS_PROVIDER). Setup saves the answer; a bare assignment in a file is not enough.")
     echo("")
-    echo("KMS provider (KEYFORGE_KMS_PROVIDER). Export it; a bare assignment in a file is not enough.")
-    echo("")
-    for name in _PROVIDERS:
+    for i, name in enumerate(_PROVIDERS):
+        if i:
+            echo("")
         echo(f"  {name}")
         echo(f"    {_PROVIDER_TEXT[name]}")
-        echo("")
+    echo("")
     choice = _ask(read_line, "KEYFORGE_KMS_PROVIDER [local]: ").lower() or "local"
     if choice not in _PROVIDERS:
         raise KeyForgeError(f"unknown KEYFORGE_KMS_PROVIDER {choice!r}; choose from {', '.join(_PROVIDERS)}")
