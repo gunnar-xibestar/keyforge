@@ -1,7 +1,7 @@
 """Interactive boot: KMS provider, optional Auth0, then username and password.
 
-Writes ``~/.keyforge/keyforge.env`` (mode 0600) so a later shell can
-``source`` it. The Auth0 password is never written there.
+Writes ``~/.keyforge/keyforge.env`` (mode 0600). Later commands load it
+when a variable is unset. The Auth0 password is never written there.
 """
 from __future__ import annotations
 import os, shlex, stat
@@ -11,6 +11,15 @@ from . import auth
 from .errors import AuthError, KeyForgeError
 
 _PROVIDERS = ("local", "pkcs11", "memory")
+
+_BANNER = r"""
+ _  __          _____
+| |/ /___ _   _|  ___|__  _ __ __ _  ___
+| ' // _ \ | | | |_ / _ \| '__/ _` |/ _ \
+| . \  __/ |_| |  _| (_) | | | (_| |  __/
+|_|\_\___|\__, |_|  \___/|_|  \__, |\___|
+          |___/               |___/
+""".strip("\n")
 
 _PROVIDER_TEXT = {
     "local": (
@@ -77,7 +86,7 @@ def _write_env(values: dict[str, str]) -> Path:
     path = env_path()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     lines = [
-        "# KeyForge boot config. source this file in your shell.",
+        "# KeyForge boot config. Loaded when a variable is unset.",
         "# The Auth0 password is not stored here.",
     ]
     for key, value in values.items():
@@ -97,6 +106,11 @@ def _write_env(values: dict[str, str]) -> Path:
     return path
 
 
+def _marks(echo, n: int) -> None:
+    for _ in range(n):
+        echo("'")
+
+
 def _ask(read_line, prompt: str) -> str:
     return read_line(prompt).strip()
 
@@ -107,18 +121,28 @@ def _yes(read_line, prompt: str) -> bool:
 
 def run(*, read_line, read_secret, echo, login=None) -> dict:
     """Prompt for KMS, then Auth0. ``login`` defaults to ``auth.password_login``."""
-    echo("KeyForge")
-    echo("--------")
-    echo("KMS provider (KEYFORGE_KMS_PROVIDER). Export it; a bare assignment in a file is not enough.")
-    for name in _PROVIDERS:
+    _marks(echo, 3)
+    if not env_path().exists():
+        echo("")
+        for line in _BANNER.splitlines():
+            echo(line)
+        echo("")
+    echo("KMS provider (KEYFORGE_KMS_PROVIDER). Setup saves the answer; a bare assignment in a file is not enough.")
+    echo("")
+    for i, name in enumerate(_PROVIDERS):
+        if i:
+            echo("")
         echo(f"  {name}")
         echo(f"    {_PROVIDER_TEXT[name]}")
+    echo("")
     choice = _ask(read_line, "KEYFORGE_KMS_PROVIDER [local]: ").lower() or "local"
     if choice not in _PROVIDERS:
         raise KeyForgeError(f"unknown KEYFORGE_KMS_PROVIDER {choice!r}; choose from {', '.join(_PROVIDERS)}")
     saved: dict[str, str] = {"KEYFORGE_KMS_PROVIDER": choice}
+    echo("")
     echo(f"selected: {choice}")
     echo(_PROVIDER_TEXT[choice])
+    echo("")
 
     if choice == "local":
         echo("Leave blank to keep the key at <store-dir>/kms-master.key.")
@@ -149,6 +173,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     echo("")
     echo("Auth0 operator login is optional. It is off until AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_AUDIENCE are all set.")
     if not _yes(read_line, "Set up Auth0 now? [y/N] "):
+        echo("")
         echo("warning: Auth0 is not set up. Every command trusts the OS user.")
         echo("warning: there is no operator scope gate. Anyone who can run keyforge as this user can create, reveal, and delete keys.")
         echo("warning: turn it on later with `keyforge setup` after creating a Native app and an API in the Auth0 dashboard.")
@@ -159,9 +184,10 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         echo("")
         echo(_status_text(info))
         echo(f"saved: {path}")
-        echo(f"source {path}")
+        _marks(echo, 5)
         return {"kms_provider": choice, "auth": info, "env_file": str(path)}
 
+    echo("")
     echo("Auth0 dashboard (https://manage.auth0.com):")
     echo("  AUTH0_DOMAIN     Settings → Domain. Hostname only, no https://")
     echo("  AUTH0_CLIENT_ID  Applications → your Native app → Settings → Client ID")
@@ -195,7 +221,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     echo(f"logged in as {principal.sub}")
     echo(_status_text(info))
     echo(f"saved: {path}")
-    echo(f"source {path}")
+    _marks(echo, 5)
     return {"kms_provider": choice, "auth": info, "env_file": str(path), "sub": principal.sub}
 
 
