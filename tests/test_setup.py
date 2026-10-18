@@ -1,4 +1,4 @@
-"""Boot prompt: KMS choice, Auth0 warning, username then password, then auth status."""
+"""Boot prompt: KMS choice, Auth0 warning, then username and password."""
 import io, os, stat, tempfile, unittest
 from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
@@ -63,7 +63,7 @@ class SetupTests(unittest.TestCase):
         self.assertIn("\n\n  pkcs11\n", text[local:pkcs + 12])
         self.assertIn("necessary for the demo", text)
         self.assertIn("trusts the OS user", text)
-        self.assertIn("auth status: auth disabled", text)
+        self.assertNotIn("auth status", text)
         self.assertIn("dpkg -L softhsm2", text)
         self.assertNotIn("Settings → Domain", text)
         body = Path(self.env_file).read_text()
@@ -122,8 +122,8 @@ class SetupTests(unittest.TestCase):
         self.assertLess(user_at, prompts.index("password: "))
         text = "\n".join(self.lines)
         self.assertIn("logged in as auth0|ada", text)
-        self.assertIn("scopes: keys:read", text)
-        self.assertIn("missing_scopes: keys:write", text)
+        self.assertNotIn("auth status", text)
+        self.assertNotIn("scopes:", text)
         self.assertIn("Applications → APIs", text)
         body = Path(self.env_file).read_text()
         self.assertIn("KEYFORGE_KMS_PROVIDER=pkcs11", body)

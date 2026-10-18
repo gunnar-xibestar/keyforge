@@ -187,7 +187,6 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
             os.environ[key] = value
         info = auth.status()
         echo("")
-        echo(_status_text(info))
         echo(f"saved: {path}")
         _marks(echo, 5)
         return {"kms_provider": choice, "auth": info, "env_file": str(path)}
@@ -209,7 +208,9 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     echo("API Permissions: keys:read keys:write keys:verify reveal:secret")
     echo("")
     domain = _ask(read_line, "AUTH0_DOMAIN: ")
+    echo("")
     client_id = _ask(read_line, "AUTH0_CLIENT_ID: ")
+    echo("")
     audience = _ask(read_line, "AUTH0_AUDIENCE [https://keyforge.local/api]: ") or "https://keyforge.local/api"
     if not domain or not client_id or not audience:
         raise AuthError("Auth0 requires AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_AUDIENCE")
@@ -222,36 +223,22 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         os.environ[key] = value
 
     echo("")
+    echo("")
     echo("Login. Username first, then password.")
+    echo("")
     echo("Username is the database user (User Management → Users), usually the email. It is not the Client ID.")
+    echo("")
     echo("Password is that user's password. It is not the Client Secret and it is not written to disk.")
+    echo("")
     username = _ask(read_line, "username: ")
+    echo("")
     password = read_secret("password: ")
     login = login or auth.password_login
     principal = login(username, password)
     path = _write_env(saved)
-    info = auth.status()
     echo("")
     echo(f"logged in as {principal.sub}")
-    echo(_status_text(info))
+    echo("")
     echo(f"saved: {path}")
     _marks(echo, 5)
-    return {"kms_provider": choice, "auth": info, "env_file": str(path), "sub": principal.sub}
-
-
-def _status_text(info: dict) -> str:
-    if not info.get("enabled"):
-        return "auth status: auth disabled"
-    if not info.get("logged_in"):
-        return f"auth status: not logged in: {info.get('reason')}"
-    scopes = " ".join(info.get("scopes") or []) or "-"
-    lines = [
-        "auth status:",
-        f"logged in as {info.get('sub')}",
-        f"scopes: {scopes}",
-        f"expires_at: {info.get('expires_at')}",
-    ]
-    missing = info.get("missing_scopes") or []
-    if missing:
-        lines.append("missing_scopes: " + " ".join(missing))
-    return "\n".join(lines)
+    return {"kms_provider": choice, "auth": {"logged_in": True, "sub": principal.sub}, "env_file": str(path), "sub": principal.sub}
