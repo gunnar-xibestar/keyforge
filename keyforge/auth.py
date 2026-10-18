@@ -432,6 +432,41 @@ def load_principal() -> Principal:
         return _refresh(refresh)
 
 
+def password_login(username: str, password: str) -> Principal:
+    """Resource-owner login. Username, then password, are sent only to the token endpoint.
+
+    Auth0 must allow the Password grant on the application. The default realm is
+    ``Username-Password-Authentication`` (override with ``AUTH0_REALM``). The
+    password is not stored and is stripped from any error text Auth0 echoes.
+    """
+    conf = _config()
+    username = (username or "").strip()
+    if not username or not password:
+        raise AuthError("username and password are required")
+    scope = os.environ.get("AUTH0_SCOPES") or DEFAULT_SCOPES
+    _check_scopes(scope)
+    realm = (os.environ.get("AUTH0_REALM") or "Username-Password-Authentication").strip()
+    if not realm or len(realm) > 128:
+        raise AuthError("AUTH0_REALM is missing or too long")
+    fields = {
+        "grant_type": "http://auth0.com/oauth/grant-type/password-realm",
+        "username": username,
+        "password": password,
+        "audience": conf["audience"],
+        "scope": scope,
+        "client_id": conf["client_id"],
+        "realm": realm,
+    }
+    if conf["secret"]:
+        fields["client_secret"] = conf["secret"]
+    body = _request_json(f"https://{conf['domain']}/oauth/token", fields)
+    desc = body.get("error_description")
+    if isinstance(desc, str) and password and password in desc:
+        body = dict(body)
+        body["error_description"] = desc.replace(password, "[redacted]")
+    return _accept_token_response(body)
+
+
 def device_login(*, prompt=None, sleep=time.sleep) -> Principal:
     """Run the device authorization flow and store a lean access token."""
     conf = _config()
@@ -500,7 +535,7 @@ def status() -> dict:
 
 def required_scope(args) -> str | None:
     cmd = getattr(args, "cmd", None)
-    if cmd in ("auth", "uninstall", "kms"):
+    if cmd in ("auth", "uninstall", "kms", "setup"):
         return None
     if cmd == "policy":
         sub = getattr(args, "policy_cmd", None) or "show"
