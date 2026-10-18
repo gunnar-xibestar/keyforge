@@ -171,6 +171,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         echo(f"source {path}")
         return {"kms_provider": choice, "auth": info, "env_file": str(path)}
 
+    echo("")
     echo("Auth0 dashboard (https://manage.auth0.com):")
     echo("  AUTH0_DOMAIN     Settings → Domain. Hostname only, no https://")
     echo("  AUTH0_CLIENT_ID  Applications → your Native app → Settings → Client ID")
@@ -190,6 +191,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     for key, value in saved.items():
         os.environ[key] = value
 
+    echo("")
     echo("")
     echo("Login. Username first, then password.")
     echo("Username is the database user (User Management → Users), usually the email. It is not the Client ID.")
