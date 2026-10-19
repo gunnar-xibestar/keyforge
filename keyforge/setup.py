@@ -5,15 +5,17 @@ file over any same-named variables inherited from the shell. The Auth0
 password is never written there.
 """
 from __future__ import annotations
-import os, secrets, shlex, stat
+import os, secrets, shlex, shutil, stat, sys
 from datetime import datetime
 from pathlib import Path
 
 from . import audit, auth
 from .errors import AuthError, KeyForgeError
 from .store import Store, resolve_path
-from .kms import destroy_aes_labels, format_status, list_aes_labels, status as kms_status
-from .softhsm import delete_token, matching_tokens, setup_instructions
+from .kms import (
+    confirm_user_pin, destroy_aes_labels, format_status, list_aes_labels, status as kms_status,
+)
+from .softhsm import delete_token, init_token, matching_tokens
 
 _PROVIDERS = ("local", "pkcs11", "memory")
 
@@ -127,6 +129,105 @@ def _marks(echo, n: int) -> None:
 
 def _ask(read_line, prompt: str) -> str:
     return read_line(prompt).strip()
+
+
+def _default_module() -> str:
+    return os.environ.get("KEYFORGE_PKCS11_MODULE") or "/usr/lib/softhsm/libsofthsm2.so"
+
+
+def _default_conf() -> str:
+    return os.environ.get("SOFTHSM2_CONF") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
+
+
+def _check_module(echo, module: str) -> None:
+    if os.path.isfile(module) and not os.path.islink(module):
+        return
+    echo(f"PKCS#11 module not found or unusable at {module}")
+
+
+def _check_softhsm_util(echo) -> None:
+    if shutil.which("softhsm2-util"):
+        return
+    echo("softhsm2-util is not on PATH")
+
+
+def _local_key_path(chosen: str) -> str:
+    if chosen:
+        return os.path.expanduser(chosen)
+    base = os.path.expanduser(os.environ.get("KEYFORGE_STORE") or "~/.keyforge/store.json")
+    return str(Path(base).parent / "kms-master.key")
+
+
+def _verify_local(echo, key_path: str) -> None:
+    echo("local — software KEK. A software AES-256 key file, mode 0600.")
+    echo(f"default key: <store-dir>/kms-master.key ({key_path})")
+    problems = []
+    try:
+        import cryptography  # noqa: F401
+    except ImportError:
+        problems.append("cryptography is not installed")
+    if os.path.lexists(key_path):
+        if os.path.islink(key_path) or not os.path.isfile(key_path):
+            problems.append(f"{key_path} is not a regular file")
+        else:
+            mode = stat.S_IMODE(os.stat(key_path).st_mode)
+            if mode != 0o600:
+                problems.append(f"{key_path} mode is {oct(mode)}; expected 0600")
+    if problems:
+        echo("result: failure")
+        for problem in problems:
+            echo(f"  {problem}")
+        return
+    echo("result: success")
+    echo("  cryptography is installed")
+    if os.path.isfile(key_path):
+        echo(f"  key file: {key_path}")
+    else:
+        echo("  key file is not created yet; the first wrap will create it")
+
+
+def _read_pin(read_secret, echo, prompt: str) -> str:
+    while True:
+        pin = read_secret(prompt)
+        if pin:
+            return pin
+        echo("input blank")
+
+
+def _pin_opens(echo, module: str, token: str, pin: str) -> bool:
+    """True when ``pin`` opens the token. A wrong PIN prints the Ctrl-C hint and returns False.
+
+    Any other failure is printed and re-raised so setup does not save that PIN.
+    """
+    try:
+        confirm_user_pin(module, token, pin)
+    except KeyForgeError as e:
+        echo(str(e))
+        if "PIN is wrong" in str(e):
+            if not sys.stdin.isatty():
+                raise KeyForgeError("no terminal") from None
+            return False
+        raise
+    return True
+
+
+def _create_token(read_secret, echo, conf: str, module: str) -> str:
+    """Ask for the user PIN and SO PIN and create the token. Returns the user PIN."""
+    while True:
+        pin = _read_pin(read_secret, echo, "KEYFORGE_PKCS11_PIN: ")
+        so_pin = _read_pin(read_secret, echo, "KEYFORGE_PKCS11_SO_PIN: ")
+        try:
+            init_token(conf, "keyforge", pin, so_pin)
+        except KeyForgeError as e:
+            echo(str(e))
+            echo("Ctrl-C to exit.")
+            if not sys.stdin.isatty():
+                raise
+            continue
+        if _pin_opens(echo, module, "keyforge", pin):
+            return pin
+        if not sys.stdin.isatty():
+            raise KeyForgeError("no terminal")
 
 
 def _echo_kms_status(echo, saved: dict[str, str]) -> None:
@@ -372,52 +473,60 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         if i:
             echo("")
         echo(f"  {name}")
-        for line in _PROVIDER_TEXT[name].splitlines():
-            echo(f"    {line}" if line else "")
     echo("")
     choice = _ask(read_line, "KEYFORGE_KMS_PROVIDER [local]: ").lower() or "local"
     if choice not in _PROVIDERS:
         raise KeyForgeError(f"unknown KEYFORGE_KMS_PROVIDER {choice!r}; choose from {', '.join(_PROVIDERS)}")
     saved: dict[str, str] = {"KEYFORGE_KMS_PROVIDER": choice}
     echo("")
-    if choice != "pkcs11":
+    if choice == "memory":
         echo(f"selected: {choice}")
         echo(_PROVIDER_TEXT[choice])
         echo("")
 
     if choice == "local":
+        echo(f"selected: {choice}")
         echo("Leave blank to keep the key at <store-dir>/kms-master.key.")
         echo("Find the store with: echo \"${KEYFORGE_STORE:-$HOME/.keyforge/store.json}\"")
         key_file = _ask(read_line, "KEYFORGE_KMS_KEY_FILE (outside the store directory) []: ")
         if key_file:
             saved["KEYFORGE_KMS_KEY_FILE"] = key_file
-    elif choice == "pkcs11":
-        default_conf = os.environ.get("SOFTHSM2_CONF") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
-        existing = matching_tokens("keyforge", default_conf)
-        echo("Create a new token:")
-        for line in setup_instructions(no_token=not existing).splitlines():
-            echo(line)
+        _verify_local(echo, _local_key_path(key_file))
         echo("")
+    elif choice == "pkcs11":
+        module = _default_module()
+        _check_module(echo, module)
+        _check_softhsm_util(echo)
+        conf = _default_conf()
+        existing = matching_tokens("keyforge", conf)
+        if not existing:
+            echo(_PROVIDER_TEXT["pkcs11"])
+            echo("")
+            echo(f"No existing token labeled 'keyforge' in {conf}.")
+            conf = _ask(read_line, f"SOFTHSM2_CONF [{conf}]: ") or conf
+            existing = matching_tokens("keyforge", conf)
         if len(existing) == 1:
             echo("Found 1 existing token labeled 'keyforge'.")
             echo(f"  oldest: {existing[0]}")
             echo("Reuse uses oldest token. (main)")
             reuse = True
         elif existing:
-            reuse = _token_menu(read_line, echo, existing, default_conf)
+            reuse = _token_menu(read_line, echo, existing, conf)
         else:
-            echo(f"No existing token labeled 'keyforge' in {default_conf}.")
             reuse = False
-        if not reuse:
-            _ask(read_line, "Press Enter when the new token exists: ")
         echo("")
-        module = _ask(read_line, "KEYFORGE_PKCS11_MODULE [/usr/lib/softhsm/libsofthsm2.so]: ") or "/usr/lib/softhsm/libsofthsm2.so"
+        token = "keyforge"
         if reuse:
-            token = "keyforge"
             echo("Token label: keyforge")
+            echo("PIN is the token user PIN from softhsm2-util --init-token --pin, not the SO PIN.")
+            while True:
+                pin = _read_pin(read_secret, echo, "KEYFORGE_PKCS11_PIN: ")
+                if _pin_opens(echo, module, token, pin):
+                    break
         else:
-            token = _ask(read_line, "KEYFORGE_PKCS11_TOKEN [keyforge]: ") or "keyforge"
-        saved_pin = os.environ.get("KEYFORGE_PKCS11_PIN", "")
+            pin = _create_token(read_secret, echo, conf, module)
+        echo(f"SOFTHSM2_CONF: {conf}")
+        saved_pin = pin
         aes_labels = list_aes_labels(module, token, saved_pin)
         asked_label = False
         if aes_labels:
@@ -428,28 +537,19 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         else:
             label = _ask(read_line, "KEYFORGE_PKCS11_KEY_LABEL [keyforge-kek]: ") or "keyforge-kek"
             asked_label = True
-        echo("PIN is the token user PIN from softhsm2-util --init-token --pin, not the SO PIN.")
-        while True:
-            pin = read_secret("KEYFORGE_PKCS11_PIN: ")
-            if pin:
-                break
-            echo("input blank")
-        if aes_labels is None:
             aes_labels = list_aes_labels(module, token, pin)
             if aes_labels is not None and label not in aes_labels and aes_labels:
                 removed = destroy_aes_labels(module, token, pin, aes_labels)
                 for name in removed:
                     echo(f"deleted {name}")
             elif aes_labels is not None and label in aes_labels:
-                chosen = _aes_key_menu(
+                label = _aes_key_menu(
                     read_line, echo, aes_labels, label,
                     lambda names: destroy_aes_labels(module, token, pin, names),
                 )
-                label = chosen
-        if asked_label and not saved_pin and aes_labels is not None and label in aes_labels:
+        if asked_label and aes_labels is not None and label in aes_labels:
             echo("The new key label you just entered will only be a name. On the first create, rotate, or reveal, if no AES key has that name, KeyForge generates a new one.")
             echo("warning: a new key cannot read secrets wrapped by an older key. The label is only a name. The old key material is not in the new key.")
-        conf = _ask(read_line, f"SOFTHSM2_CONF [{default_conf}]: ") or default_conf
         saved.update({
             "KEYFORGE_PKCS11_MODULE": module,
             "KEYFORGE_PKCS11_TOKEN": token,
@@ -536,9 +636,20 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     echo("")
     username = _ask(read_line, "username: ")
     echo("")
-    password = read_secret("password: ")
     login = login or auth.password_login
-    principal = login(username, password)
+    while True:
+        password = read_secret("password: ")
+        try:
+            principal = login(username, password)
+            break
+        except AuthError as e:
+            message = str(e)
+            rejected = "invalid_grant" in message
+            if not rejected:
+                raise
+            echo("password failed. Ctrl-C to exit.")
+            if not sys.stdin.isatty():
+                raise KeyForgeError("no terminal") from None
     _audit_chain(echo, saved)
     path = _write_env(saved)
     echo("")

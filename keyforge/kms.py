@@ -368,29 +368,45 @@ def _pin_mismatch(exc: BaseException) -> bool:
     return type(exc).__name__ == "PinIncorrect"
 
 
-def _report_pin_mismatch() -> None:
-    from .softhsm import matching_tokens, setup_instructions
-    conf = os.environ.get("SOFTHSM2_CONF") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
-    print("mismatch error (pin failed after 3 attempts)\n", file=sys.stderr)
-    print(setup_instructions(no_token=not matching_tokens("keyforge", conf)), file=sys.stderr)
-
-
 def _open_token(token, pin: str, read_secret=None):
-    """Log in with ``pin``. A wrong PIN may be retried twice more on a terminal."""
+    """Log in with ``pin``. A wrong PIN is asked again until it is correct or the operator stops.
+
+    A non-interactive stdin fails on the first wrong PIN. Ctrl-C exits the prompt.
+    """
     current = pin
-    for attempt in range(1, 4):
+    while True:
         try:
             return token.open(rw=True, user_pin=current)
         except Exception as e:
             if not _pin_mismatch(e):
                 raise
-            if attempt == 3:
-                _report_pin_mismatch()
-                raise KeyForgeError("mismatch error (pin failed after 3 attempts)") from None
             if not sys.stdin.isatty():
                 raise KeyForgeError("no terminal") from None
+            print("PIN is wrong. Ctrl-C to exit.", file=sys.stderr)
             current = read_user_pin(read_secret)
-    raise KeyForgeError("mismatch error (pin failed after 3 attempts)")
+
+
+def confirm_user_pin(module: str, token_label: str, pin: str) -> None:
+    """Open the token once. A wrong PIN raises ``KeyForgeError`` and does not retry."""
+    if not module or not os.path.isfile(module):
+        raise KeyForgeError(f"PKCS#11 module not found or unusable at {module}")
+    try:
+        import pkcs11
+    except ImportError:
+        raise KeyForgeError(
+            "python-pkcs11 is not installed (pip install python-pkcs11 — not the unrelated PyPI package named pkcs11)"
+        ) from None
+    try:
+        lib = pkcs11.lib(module)
+        token = lib.get_token(token_label=token_label)
+        session = token.open(rw=True, user_pin=pin)
+    except Exception as e:
+        if _pin_mismatch(e):
+            raise KeyForgeError("PIN is wrong. Ctrl-C to exit.") from None
+        raise KeyForgeError(f"PKCS#11 login failed ({_safe_exc(e, pin)})") from None
+    close = getattr(session, "close", None)
+    if close is not None:
+        close()
 
 
 def list_aes_labels(module: str, token_label: str, pin: str) -> list[str] | None:
@@ -567,9 +583,6 @@ def status(store_path: str | None = None) -> dict:
             missing.append("KEYFORGE_PKCS11_TOKEN")
         if not pin_set:
             missing.append("KEYFORGE_PKCS11_PIN")
-            from .softhsm import matching_tokens, setup_instructions
-            conf = os.environ.get("SOFTHSM2_CONF") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
-            info["softhsm_setup"] = setup_instructions(no_token=not matching_tokens("keyforge", conf))
         if not label:
             missing.append("KEYFORGE_PKCS11_KEY_LABEL")
         if missing:

@@ -85,22 +85,34 @@ class SoftHsmTests(unittest.TestCase):
 
 
 class PinAttemptTests(unittest.TestCase):
-    def test_third_wrong_pin_prints_mismatch_and_setup(self):
+    def test_wrong_pin_retries_until_correct(self):
         from keyforge.kms import _open_token
-        pins = iter(["second", "third"])
+        pins = iter(["second"])
+
+        class Token:
+            def open(self, rw, user_pin):
+                if user_pin != "second":
+                    raise type("PinIncorrect", (Exception,), {})("wrong")
+                return "session"
+
+        err = io.StringIO()
+        with mock.patch("sys.stdin.isatty", return_value=True), redirect_stderr(err):
+            opened = _open_token(Token(), "first", read_secret=lambda _p: next(pins))
+        self.assertEqual(opened, "session")
+        self.assertIn("PIN is wrong. Ctrl-C to exit.", err.getvalue())
+        self.assertNotIn("3 attempts", err.getvalue())
+
+    def test_noninteractive_wrong_pin_fails_once(self):
+        from keyforge.kms import _open_token
 
         class Token:
             def open(self, rw, user_pin):
                 raise type("PinIncorrect", (Exception,), {})("wrong")
 
-        err = io.StringIO()
-        with mock.patch("sys.stdin.isatty", return_value=True), redirect_stderr(err):
+        with mock.patch("sys.stdin.isatty", return_value=False):
             with self.assertRaises(KeyForgeError) as cm:
-                _open_token(Token(), "first", read_secret=lambda _p: next(pins))
-        self.assertEqual(str(cm.exception), "mismatch error (pin failed after 3 attempts)")
-        text = err.getvalue()
-        self.assertIn("mismatch error (pin failed after 3 attempts)\n\nSoftHSM setup:", text)
-        self.assertIn("warning: that library runs inside KeyForge", text)
+                _open_token(Token(), "first", read_secret=lambda _p: "unused")
+        self.assertIn("no terminal", str(cm.exception))
 
 
 class NewAesKeyNoticeTests(unittest.TestCase):
