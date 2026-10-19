@@ -165,8 +165,12 @@ def _format_verify_report(r: dict) -> str:
         if r["legacy"]:
             summary += f" ({r['legacy']} legacy unchained event(s) not protected)"
     else:
-        summary = f"AUDIT CHAIN BROKEN: {r['error']}"
+        summary = "\n".join(
+            f"AUDIT CHAIN BROKEN: {err}" for err in (r.get("errors") or [r["error"]])
+        )
     lines.append(summary)
+    for warning in r.get("warnings") or []:
+        lines.append(warning)
     lines.append("")
     lines.append("checks")
     lines.append("------")

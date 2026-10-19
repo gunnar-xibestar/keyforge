@@ -421,7 +421,11 @@ def _audit_chain(echo, saved: dict) -> None:
             echo(f"{r['legacy']} legacy event(s) have no hash. Tampering with those events is not detected.")
         echo("")
     else:
-        echo(f"AUDIT CHAIN BROKEN: {r['error']}")
+        for err in r.get("errors") or [r["error"]]:
+            echo(f"AUDIT CHAIN BROKEN: {err}")
+        echo("")
+    for warning in r.get("warnings") or []:
+        echo(warning)
         echo("")
     found_working = bool(key and r["ok"] and r["mac_verified"] and not key_created and hmac_was_enabled)
     next_to_store = (
