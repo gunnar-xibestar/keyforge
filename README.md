@@ -7,8 +7,6 @@ An API key looks like `kf_<env>_<32 random chars>`. `create` and `rotate` print 
 - a salted **PBKDF2-HMAC-SHA256** hash, used by `verify`
 - an **AES-256-GCM** envelope of the secret, used by `reveal`
 
-Keys created before envelope support have a hash only. `verify` still works for them. `reveal` does not, because the secret was never retained. Rotate those keys if you need a recoverable copy.
-
 This is a single-operator tool. The local KMS is a software key or a PKCS#11 token you configure.
 
 ## Install
@@ -37,11 +35,7 @@ Store: `--store PATH`, `$KEYFORGE_STORE`, or `~/.keyforge/store.json`. Writes ar
 
 ### 2. `keyforge setup`
 
-Run `keyforge setup`. It is interactive and refuses a non-interactive stdin. `keyforge` with no command exits with a usage error.
-
-The prompt writes every answer except the Auth0 password to `~/.keyforge/keyforge.env` (mode 0600). Later commands apply that file over a same-named variable inherited from the shell. The parent shell itself is unchanged.
-
-The steps below are the prompt, in order. The reference material for each step sits under that step.
+Later commands apply `~/.keyforge/keyforge.env` over a same-named variable inherited from the shell. The parent shell itself is unchanged.
 
 #### Step 1. KMS provider
 
@@ -51,9 +45,7 @@ The screen lists the provider names, then asks:
 KEYFORGE_KMS_PROVIDER [local]:
 ```
 
-Setup records the answer and prints `keyforge kms status` before Auth0. `result: success` means that provider is ready; `result: failure` prints the error and setup continues.
-
-Auth0 `auth login` / `auth status` do **not** use the KMS — only `create`, `rotate`, and `reveal` (and envelope import) do.
+Setup records the answer. A KMS failure is printed under `kms` at that step and setup continues. When KMS setup succeeds, that status is printed at the end under `kms`. When Auth0 login succeeds, that status is printed at the end under `auth0`.
 
 | provider | what wraps the data key |
 |---|---|
@@ -87,7 +79,7 @@ A missing AES key is still generated on first use (create, rotate, or reveal). T
 
 The PIN is stored in `keyforge.env` at mode 0600. It is not written to the store or to logs. A later TTY prompt for a missing PIN stays in the process only and is not written back to `keyforge.env`.
 
-`keyforge kms status` then reports `provider: pkcs11` and `ready: True`, or lists what is missing.
+`keyforge kms status` reports `provider: pkcs11` and `ready: True`, or lists what is missing. Setup prints that same status at the end under `kms` when it succeeds.
 
 `Pkcs11Kms` talks to any object with `wrap(label, dek, aad)` / `unwrap(label, blob, aad)`.
 
@@ -155,7 +147,7 @@ The default realm is `Username-Password-Authentication` (`AUTH0_REALM` overrides
 
 `auth login --from-file response.json` validates a token response you already have; `id_token` is discarded. `auth logout` deletes the token file. `auth login`, `auth status`, and `auth logout` do not require an existing principal.
 
-Setup does not print `auth status`. Run `keyforge auth status` when you want the principal, scopes, and `missing_scopes`. It never prints the token.
+A successful setup login prints that result at the end under `auth0`: who logged in, scopes, `missing_scopes` when any were withheld, and `expires_at`. Run `keyforge auth status` later for the same view. It never prints the token.
 
 Auth0 returns the **intersection** of what KeyForge requested and what the tenant grants. Permission names must match exactly (trailing spaces in Auth0 silently drop a scope).
 
@@ -193,7 +185,7 @@ Access-token rejection rules: [Token diet](#token-diet). Every variable: [Enviro
 | `purge [--older-than 7d] [--include-revoked] [--dry-run] [--yes]` | delete expired and post-grace keys |
 | `setup` | boot prompt: KMS provider, optional Auth0, then username and password. Password is not saved |
 | `auth login [--from-file FILE]` / `auth status` / `auth logout` | device login, principal status, logout. Status never prints tokens. With Auth0 unset, status reports auth disabled |
-| `kms status` | show active KMS provider and whether it is ready (never prints the PKCS#11 PIN). Auth login does not use the KMS |
+| `kms status` | show active KMS provider and whether it is ready (never prints the PKCS#11 PIN) |
 | `serve [--host 127.0.0.1] [--port 8787]` | **demo** HTTP server: clients authenticate only with `Authorization: Bearer kf_...`. Not for production |
 | `uninstall [--dry-run] [--yes] [--include-configured]` | delete `~/.keyforge` only. See [Uninstall](#uninstall) |
 

@@ -158,7 +158,7 @@ def _local_key_path(chosen: str) -> str:
     return str(Path(base).parent / "kms-master.key")
 
 
-def _verify_local(echo, key_path: str) -> None:
+def _verify_local(echo, key_path: str) -> list[str]:
     echo("local — software KEK. A software AES-256 key file, mode 0600.")
     echo(f"default key: <store-dir>/kms-master.key ({key_path})")
     problems = []
@@ -177,13 +177,13 @@ def _verify_local(echo, key_path: str) -> None:
         echo("result: failure")
         for problem in problems:
             echo(f"  {problem}")
-        return
-    echo("result: success")
-    echo("  cryptography is installed")
+        return []
+    notes = ["cryptography is installed"]
     if os.path.isfile(key_path):
-        echo(f"  key file: {key_path}")
+        notes.append(f"key file: {key_path}")
     else:
-        echo("  key file is not created yet; the first wrap will create it")
+        notes.append("key file is not created yet; the first wrap will create it")
+    return notes
 
 
 def _read_pin(read_secret, echo, prompt: str) -> str:
@@ -230,22 +230,34 @@ def _create_token(read_secret, echo, conf: str, module: str) -> str:
             raise KeyForgeError("no terminal")
 
 
-def _echo_kms_status(echo, saved: dict[str, str]) -> None:
-    """Print ``keyforge kms status`` for the provider just configured. Does not abort setup."""
+def _kms_status_lines(saved: dict[str, str]) -> list[str]:
+    """``keyforge kms status`` lines for the provider just configured."""
     previous = {key: os.environ.get(key) for key in saved}
     os.environ.update(saved)
     try:
-        lines = format_status(kms_status())
+        return format_status(kms_status())
     finally:
         for key, old in previous.items():
             if old is None:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = old
-    echo("")
-    echo("kms status")
-    for line in lines:
-        echo(line)
+
+
+def _echo_statuses(echo, kms_lines: list[str] | None, auth_lines: list[str] | None) -> None:
+    """Print successful process statuses at the end, titled by process."""
+    if kms_lines:
+        echo("")
+        echo("kms")
+        echo("---")
+        for line in kms_lines:
+            echo(line)
+    if auth_lines:
+        echo("")
+        echo("auth0")
+        echo("-----")
+        for line in auth_lines:
+            echo(line)
 
 
 def _token_menu(read_line, echo, paths: list[str], conf: str) -> bool:
@@ -545,6 +557,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     if choice not in _PROVIDERS:
         raise KeyForgeError(f"unknown KEYFORGE_KMS_PROVIDER {choice!r}; choose from {', '.join(_PROVIDERS)}")
     saved: dict[str, str] = {"KEYFORGE_KMS_PROVIDER": choice}
+    local_notes: list[str] = []
     echo("")
     if choice == "memory":
         echo(f"selected: {choice}")
@@ -558,7 +571,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         key_file = _ask(read_line, "KEYFORGE_KMS_KEY_FILE (outside the store directory) []: ")
         if key_file:
             saved["KEYFORGE_KMS_KEY_FILE"] = key_file
-        _verify_local(echo, _local_key_path(key_file))
+        local_notes = _verify_local(echo, _local_key_path(key_file))
         echo("")
     elif choice == "pkcs11":
         module = _default_module()
@@ -625,9 +638,18 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
             "SOFTHSM2_CONF": conf,
         })
 
-    _echo_kms_status(echo, saved)
+    kms_lines = local_notes + _kms_status_lines(saved)
+    kms_ok = "result: failure" not in kms_lines and any(line == "result: success" for line in kms_lines)
+    if not kms_ok:
+        echo("")
+        echo("kms")
+        echo("---")
+        for line in kms_lines:
+            echo(line)
+        kms_lines = []
 
     echo("")
+    auth_ready: list[str] = []
     existing_auth = {name: os.environ.get(name, "").strip() for name in (
         "AUTH0_DOMAIN", "AUTH0_CLIENT_ID", "AUTH0_AUDIENCE")}
     if all(existing_auth.values()):
@@ -637,8 +659,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         for name, value in existing_auth.items():
             echo(f"  {name}: {value}")
         echo("")
-        echo("result: success")
-        echo("  AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_AUDIENCE are set.")
+        auth_ready = ["AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_AUDIENCE are set."]
         saved.update(existing_auth)
         for key, value in saved.items():
             os.environ[key] = value
@@ -654,9 +675,8 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         _audit_chain(echo, saved)
         path = _write_env(saved)
         echo("")
-        echo("result: success")
-        echo("  saved the KMS choice. Auth0 was skipped.")
         echo(f"saved: {path}")
+        _echo_statuses(echo, kms_lines, None)
         _marks(echo, 5)
         return {"kms_provider": choice, "auth": info, "env_file": str(path)}
     else:
@@ -721,12 +741,16 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     path = _write_env(saved)
     echo("")
     grant = auth.scope_grant(principal)
-    echo("result: success")
-    echo(f"logged in as {principal.sub}")
-    echo("scopes: " + (" ".join(grant["scopes"]) or "-"))
+    auth_lines = [
+        "result: success",
+        f"logged in as {principal.sub}",
+        "scopes: " + (" ".join(grant["scopes"]) or "-"),
+    ]
     if grant["missing_scopes"]:
-        echo("missing_scopes: " + " ".join(grant["missing_scopes"]))
-    echo(f"expires_at: {principal.exp}")
+        auth_lines.append("missing_scopes: " + " ".join(grant["missing_scopes"]))
+    auth_lines.append(f"expires_at: {principal.exp}")
+    auth_lines.extend(auth_ready)
     echo(f"saved: {path}")
+    _echo_statuses(echo, kms_lines, auth_lines)
     _marks(echo, 5)
     return {"kms_provider": choice, "auth": {"logged_in": True, "sub": principal.sub}, "env_file": str(path), "sub": principal.sub}
