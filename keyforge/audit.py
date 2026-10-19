@@ -88,10 +88,20 @@ def _event_mac_error(i: int, ev: dict, key: bytes, hmac_from: int) -> str | None
             "from the loaded HMAC key. The event hash matches; there is no mac field."
         )
     if not hmac.compare_digest(ev["mac"], _mac(key, ev["hash"])):
+        if i == hmac_from:
+            verdict = (
+                "HMAC INVALID. This is the first event that must have a MAC, and this key does not match it."
+            )
+        else:
+            verdict = (
+                f"HMAC VALID for events {hmac_from} through {i - 1}. "
+                "HMAC INVALID for this event. The same key matches those earlier events."
+            )
         return (
-            f"event {i}: MAC invalid. The stored mac is not HMAC-SHA256 of this event's hash "
-            "under the HMAC key that was loaded. The hash chain matches through this event. "
-            "This key did not sign the event, or the event changed after the MAC was written."
+            f"event {i}: MAC invalid. {verdict} "
+            "The stored mac is not HMAC-SHA256 of this event's hash under the HMAC key that was loaded. "
+            "The hash chain matches through this event. This key did not sign the event, "
+            "or the event changed after the MAC was written."
         )
     return None
 
