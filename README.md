@@ -45,7 +45,7 @@ The steps below are the prompt, in order. The reference material for each step s
 
 #### Step 1. KMS provider
 
-The screen prints where each value comes from, then asks:
+The screen lists the provider names, then asks:
 
 ```
 KEYFORGE_KMS_PROVIDER [local]:
@@ -61,23 +61,21 @@ Auth0 `auth login` / `auth status` do **not** use the KMS — only `create`, `ro
 | `pkcs11` | AES-256-GCM inside a PKCS#11 token. The wrapping key is not exported. |
 | `memory` | Replaces `pkcs11` and `local` for unit tests. An in-process key (`KEYFORGE_KMS_MEMORY_KEY` may pin it as 64 hex chars). Useless after the process exits. |
 
-**If you enter `local`.** Setup asks for `KEYFORGE_KMS_KEY_FILE`. Leave it blank to keep the key at `<store-dir>/kms-master.key`.
+**If you enter `local`.** Setup asks for `KEYFORGE_KMS_KEY_FILE`. Leave it blank to keep the key at `<store-dir>/kms-master.key`. It then checks that `cryptography` is installed and, when the key file already exists, that it is a regular file at mode 0600. A missing file is `result: success` with a note that the first wrap creates it.
 
 The default store is `~/.keyforge/store.json`, so the default key is `~/.keyforge/kms-master.key`. The file is a software KEK. Put `KEYFORGE_KMS_KEY_FILE` outside the store directory if the ciphertext and the wrapping key should sit on different permission boundaries. Anyone who can read both can reveal secrets.
 
 Find the store with `echo "${KEYFORGE_STORE:-$HOME/.keyforge/store.json}"`.
 
-**If you enter `pkcs11`.** Install the binding and a module first (see [Package](#1-package)). Setup prints the commands to create a SoftHSM token.
+**If you enter `pkcs11`.** Install the binding and a module first (see [Package](#1-package)). Setup uses `KEYFORGE_PKCS11_MODULE` when it is already set, otherwise `/usr/lib/softhsm/libsofthsm2.so`. It does not ask for the module. The path is printed only when that file is missing or unusable. `softhsm2-util` is mentioned only when it is not on `PATH`.
 
-If one token labeled `keyforge` already exists, setup reuses it as main. If several exist, it lists them oldest first and can delete any except the main token. Create waits until you press Enter.
+If a token labeled `keyforge` is already in the SoftHSM config (`SOFTHSM2_CONF`, or `~/.keyforge/softhsm/softhsm2.conf`), setup reuses the oldest one as main. Several tokens are listed oldest first, and any except the main token can be deleted. After the user PIN opens that token, setup prints `SOFTHSM2_CONF` and does not ask for it.
 
-Setup then asks, in order, for:
+If no token is found, setup prints the PKCS#11 field guide and asks for `SOFTHSM2_CONF` only then. It asks for the user PIN and the SO PIN and creates the token itself (`softhsm2-util --init-token`). The SO PIN is not saved. A failed create prints the tool error and asks again. Ctrl-C exits.
 
-- `KEYFORGE_PKCS11_MODULE` (default `/usr/lib/softhsm/libsofthsm2.so`; `dpkg -L softhsm2 | grep '\.so$'`)
-- `KEYFORGE_PKCS11_TOKEN` (default `keyforge`; `softhsm2-util --show-slots`; skipped and fixed to `keyforge` when that token is reused)
-- the AES key label
-- the user PIN (`KEYFORGE_PKCS11_PIN`, from `--init-token --pin`, not the SO PIN)
-- `SOFTHSM2_CONF` (default `~/.keyforge/softhsm/softhsm2.conf`)
+A wrong user PIN, during setup and later on `create`, `rotate`, and `reveal`, prints that the PIN is wrong and that Ctrl-C exits, then asks again. A non-interactive stdin fails on the first wrong PIN.
+
+The token label is `keyforge`. Setup then asks for the AES key label when `keyforge-kek` is not already on the token.
 
 If an AES key labeled `keyforge-kek` is already on the token, setup keeps that label and does not ask `KEYFORGE_PKCS11_KEY_LABEL`. Otherwise it asks for `KEYFORGE_PKCS11_KEY_LABEL` (default `keyforge-kek`).
 
@@ -149,7 +147,7 @@ username:
 password:
 ```
 
-The username is the database user (User Management → Users), usually the email. It is not the Client ID. The password is that user's password. It is not the Client Secret. It is sent with Auth0's password-realm grant and is not written to disk.
+The username is the database user (User Management → Users), usually the email. It is not the Client ID. The password is that user's password. It is not the Client Secret. It is sent with Auth0's password-realm grant and is not written to disk. A rejected password prints that it failed and that Ctrl-C exits, then asks for the password again. The username stays. A disabled Password grant, missing Auth0 settings, or a network error stops setup. A non-interactive stdin fails on the first rejection.
 
 The default realm is `Username-Password-Authentication` (`AUTH0_REALM` overrides it). That grant has to be enabled on the Native app.
 

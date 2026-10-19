@@ -69,7 +69,9 @@ class SetupTests(unittest.TestCase):
         self.assertIn("ready: True", text)
         self.assertIn("trusts the OS user", text)
         self.assertNotIn("auth status", text)
-        self.assertIn("dpkg -L softhsm2", text)
+        self.assertNotIn("dpkg -L softhsm2", text)
+        self.assertIn("result: success", text)
+        self.assertIn("cryptography is installed", text)
         self.assertNotIn("Settings → Domain", text)
         body = Path(self.env_file).read_text()
         self.assertIn("KEYFORGE_KMS_PROVIDER=local", body)
@@ -160,17 +162,14 @@ class SetupTests(unittest.TestCase):
         answers = iter([
             "pkcs11",
             "",
-            "/tmp/no-such-libsofthsm2.so",
-            "keyforge",
             "keyforge-kek",
-            "",
             "y",
             "tenant.example.test",
             "client-id",
             "https://keyforge.local/api",
             "ada@example.test",
         ])
-        secrets = iter(["pin-secret", "user-secret"])
+        secrets = iter(["pin-secret", "so-pin", "user-secret"])
         prompts = []
 
         def read_line(prompt):
@@ -195,27 +194,35 @@ class SetupTests(unittest.TestCase):
                     "scopes": ["keys:read"], "expires_at": 1, "missing_scopes": ["keys:write"]}
 
         auth.status = status
+        real_init = setup_mod.init_token
+        real_confirm = setup_mod.confirm_user_pin
+        setup_mod.init_token = lambda *a, **k: "/tmp/softhsm2.conf"
+        setup_mod.confirm_user_pin = lambda *a, **k: None
         try:
             result = setup_mod.run(read_line=read_line, read_secret=read_secret, echo=self._echo, login=login)
         finally:
             auth.status = real_status
+            setup_mod.init_token = real_init
+            setup_mod.confirm_user_pin = real_confirm
         secret_prompts = [p for p in prompts if "PIN" in p or p.startswith("password")]
-        self.assertEqual(secret_prompts, ["KEYFORGE_PKCS11_PIN: ", "password: "])
+        self.assertEqual(secret_prompts, ["KEYFORGE_PKCS11_PIN: ", "KEYFORGE_PKCS11_SO_PIN: ", "password: "])
         user_at = prompts.index("username: ")
         self.assertLess(user_at, prompts.index("password: "))
         text = "\n".join(self.lines)
         self.assertIn("logged in as auth0|ada", text)
         self.assertNotIn("auth status", text)
         self.assertNotIn("scopes:", text)
-        self.assertIn("softhsm2-util --init-token", text)
+        self.assertNotIn("softhsm2-util --init-token", text)
         self.assertNotIn("Reuse the oldest token?", text)
         self.assertNotIn("another terminal", text)
-        self.assertLess(prompts.index("Press Enter when the new token exists: "), prompts.index("KEYFORGE_PKCS11_MODULE [/usr/lib/softhsm/libsofthsm2.so]: "))
+        self.assertNotIn("Press Enter when the new token exists: ", prompts)
+        self.assertNotIn("KEYFORGE_PKCS11_MODULE [/usr/lib/softhsm/libsofthsm2.so]: ", prompts)
         self.assertIn("No existing token labeled 'keyforge'", text)
-        self.assertIn("That check ran and no token labeled keyforge came up", text)
-        self.assertIn("That file is the PKCS#11 library KeyForge loads.", text)
-        self.assertIn("warning: that library runs inside KeyForge", text)
-        self.assertIn("Create a new token:", text)
+        self.assertIn("Module: KEYFORGE_PKCS11_MODULE", text)
+        self.assertIn("dpkg -L softhsm2", text)
+        self.assertNotIn("Create a new token:", text)
+        self.assertNotIn("SoftHSM setup:", text)
+        self.assertIn("SOFTHSM2_CONF:", text)
         self.assertLess(text.index("kms status"), text.index("Auth0 dashboard"))
         self.assertIn("provider: pkcs11", text)
         self.assertIn("Applications → APIs", text)
@@ -247,9 +254,7 @@ class SetupTests(unittest.TestCase):
         answers = iter([
             "pkcs11",
             "2",
-            "/tmp/no-such-libsofthsm2.so",
             "keyforge-kek",
-            "",
             "n",
         ])
         prompts = []
@@ -258,13 +263,20 @@ class SetupTests(unittest.TestCase):
             prompts.append(prompt)
             return next(answers)
 
-        setup_mod.run(read_line=read_line, read_secret=lambda _p: "pin-secret", echo=self._echo)
+        real_confirm = setup_mod.confirm_user_pin
+        setup_mod.confirm_user_pin = lambda *a, **k: None
+        try:
+            setup_mod.run(read_line=read_line, read_secret=lambda _p: "pin-secret", echo=self._echo)
+        finally:
+            setup_mod.confirm_user_pin = real_confirm
         self.assertIn("Select a number to delete, c to create, or Enter to reuse main: ", prompts)
         self.assertNotIn("Press Enter when the new token exists: ", prompts)
         self.assertTrue(oldest.is_dir())
         self.assertFalse(newer.exists())
         text = "\n".join(self.lines)
-        self.assertIn("Create a new token:", text)
+        self.assertNotIn("Create a new token:", text)
+        self.assertNotIn("SOFTHSM2_CONF [", "\n".join(prompts))
+        self.assertIn(f"SOFTHSM2_CONF: {conf}", text)
         self.assertIn("deleted ", text)
         self.assertIn("Reuse uses oldest token. (main)", text)
         self.assertIn("Token label: keyforge", text)
@@ -273,7 +285,7 @@ class SetupTests(unittest.TestCase):
         self.assertIn("limited number of slots", text)
 
     def test_existing_keyforge_kek_skips_the_label_prompt(self):
-        answers = iter(["pkcs11", "", "/tmp/no-such-libsofthsm2.so", "", "", "n"])
+        answers = iter(["pkcs11", "", "n"])
         prompts = []
 
         def read_line(prompt):
@@ -284,11 +296,17 @@ class SetupTests(unittest.TestCase):
             return ["keyforge-kek"]
 
         real = setup_mod.list_aes_labels
+        real_init = setup_mod.init_token
+        real_confirm = setup_mod.confirm_user_pin
         setup_mod.list_aes_labels = labels
+        setup_mod.init_token = lambda *a, **k: "/tmp/softhsm2.conf"
+        setup_mod.confirm_user_pin = lambda *a, **k: None
         try:
             setup_mod.run(read_line=read_line, read_secret=lambda _p: "pin-secret", echo=self._echo)
         finally:
             setup_mod.list_aes_labels = real
+            setup_mod.init_token = real_init
+            setup_mod.confirm_user_pin = real_confirm
         text = "\n".join(self.lines)
         self.assertNotIn("KEYFORGE_PKCS11_KEY_LABEL [keyforge-kek]: ", prompts)
         self.assertIn("Key label: keyforge-kek", self.lines)
@@ -312,8 +330,8 @@ class SetupTests(unittest.TestCase):
         self.assertIn("deleted old", lines)
 
     def test_blank_pin_asks_again(self):
-        answers = iter(["pkcs11", "", "/tmp/no-such-libsofthsm2.so", "keyforge", "keyforge-kek", "", "n"])
-        secrets = iter(["", "pin-secret"])
+        answers = iter(["pkcs11", "", "keyforge-kek", "n"])
+        secrets = iter(["", "pin-secret", "so-pin"])
         prompts = []
 
         def read_line(prompt):
@@ -324,11 +342,46 @@ class SetupTests(unittest.TestCase):
             prompts.append(prompt)
             return next(secrets)
 
-        setup_mod.run(read_line=read_line, read_secret=read_secret, echo=self._echo)
+        real_init = setup_mod.init_token
+        real_confirm = setup_mod.confirm_user_pin
+        setup_mod.init_token = lambda *a, **k: "/tmp/softhsm2.conf"
+        setup_mod.confirm_user_pin = lambda *a, **k: None
+        try:
+            setup_mod.run(read_line=read_line, read_secret=read_secret, echo=self._echo)
+        finally:
+            setup_mod.init_token = real_init
+            setup_mod.confirm_user_pin = real_confirm
         self.assertEqual(prompts.count("KEYFORGE_PKCS11_PIN: "), 2)
         self.assertIn("input blank", self.lines)
-        self.assertEqual(self.lines.count("SoftHSM setup:"), 1)
+        self.assertNotIn("SoftHSM setup:", self.lines)
         self.assertIn("KEYFORGE_PKCS11_PIN=pin-secret", Path(self.env_file).read_text())
+
+    def test_wrong_auth0_password_is_asked_again(self):
+        os.environ["AUTH0_DOMAIN"] = "tenant.example.test"
+        os.environ["AUTH0_CLIENT_ID"] = "client-id"
+        os.environ["AUTH0_AUDIENCE"] = "https://keyforge.local/api"
+        answers = iter(["local", "", "ada@example.test"])
+        secrets = iter(["nope", "user-secret"])
+        calls = []
+
+        def read_line(prompt):
+            return next(answers)
+
+        def read_secret(prompt):
+            return next(secrets)
+
+        def login(username, password):
+            calls.append(password)
+            if password == "nope":
+                raise auth.AuthError("Auth0 token endpoint: invalid_grant: Wrong email or password")
+            return Principal(sub="auth0|ada", scopes=frozenset({"keys:read"}), exp=1)
+
+        from unittest import mock
+        with mock.patch("sys.stdin.isatty", return_value=True):
+            setup_mod.run(read_line=read_line, read_secret=read_secret, echo=self._echo, login=login)
+        self.assertEqual(calls, ["nope", "user-secret"])
+        self.assertIn("password failed. Ctrl-C to exit.", self.lines)
+        self.assertNotIn("nope", Path(self.env_file).read_text())
 
     def test_bare_keyforge_needs_a_command(self):
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:

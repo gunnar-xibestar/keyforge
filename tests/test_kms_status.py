@@ -57,8 +57,8 @@ class KmsStatusTests(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         self.assertIn('"provider": "pkcs11"', out)
         self.assertIn("KEYFORGE_PKCS11_MODULE", out)
-        self.assertIn("softhsm2-util --init-token", out)
-        self.assertIn("SO PIN is only for --so-pin", out)
+        self.assertIn("KEYFORGE_PKCS11_PIN", out)
+        self.assertNotIn("softhsm2-util --init-token", out)
 
     def test_status_prompts_for_a_missing_pin_on_a_tty(self):
         os.environ["KEYFORGE_KMS_PROVIDER"] = "pkcs11"

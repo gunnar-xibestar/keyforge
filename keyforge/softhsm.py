@@ -7,7 +7,7 @@ the newer directories under ``directories.tokendir`` and leaves the oldest
 ``token.object``. A hardware module is left alone.
 """
 from __future__ import annotations
-import os, shutil, sys
+import os, shutil, subprocess, sys
 from pathlib import Path
 
 from .errors import KeyForgeError
@@ -48,6 +48,51 @@ def setup_instructions(*, no_token: bool = False) -> str:
         "warning: that library runs inside KeyForge. It sees the user PIN and every data key that is wrapped.",
     )))
     return "\n\n".join(groups)
+
+
+def ensure_softhsm_conf(conf_path: str) -> str:
+    """Create a SoftHSM config and token directory when ``conf_path`` is missing."""
+    path = Path(os.path.expanduser(conf_path))
+    if path.is_file() and not path.is_symlink():
+        return str(path)
+    if path.exists():
+        raise KeyForgeError(f"SOFTHSM2_CONF is not a regular file: {path}")
+    tokens = path.parent / "tokens"
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    tokens.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.write_text(
+        f"directories.tokendir = {tokens}\nobjectstore.backend = file\nlog.level = ERROR\n"
+    )
+    os.chmod(path, 0o600)
+    return str(path)
+
+
+def init_token(conf_path: str, label: str, pin: str, so_pin: str) -> str:
+    """Create a SoftHSM token. The SO PIN is passed to ``--so-pin`` and not stored.
+
+    Returns the config path. Raises ``KeyForgeError`` with the tool's error,
+    with both PINs redacted, when ``softhsm2-util`` fails.
+    """
+    if not pin or not so_pin:
+        raise KeyForgeError("a user PIN and an SO PIN are required to create a token")
+    conf = ensure_softhsm_conf(conf_path)
+    env = os.environ.copy()
+    env["SOFTHSM2_CONF"] = conf
+    try:
+        proc = subprocess.run(
+            ["softhsm2-util", "--init-token", "--free", "--label", label,
+             "--pin", pin, "--so-pin", so_pin],
+            env=env, capture_output=True, text=True,
+        )
+    except OSError as e:
+        raise KeyForgeError(f"softhsm2-util is not on PATH ({e})") from None
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "softhsm2-util failed").strip()
+        for secret in (pin, so_pin):
+            if secret:
+                detail = detail.replace(secret, "[redacted]")
+        raise KeyForgeError(detail)
+    return conf
 
 
 def tokendir(conf_path: str | None) -> Path | None:
