@@ -171,10 +171,17 @@ def _format_verify_report(r: dict) -> str:
         walked = r.get("walked")
         last = r.get("walked_last")
         if isinstance(walked, int) and walked > 0 and isinstance(last, int):
-            summary += (
-                f"\nwalk: checked events 0 through {last} ({walked} events). "
-                "The walk ends at the last event in the log."
-            )
+            if r.get("walk_continued"):
+                movement = "The walk continued past the first mismatch and finished at the last event."
+            else:
+                movement = "The first mismatch is the last event. Nothing follows it. The walk still finished at the end of the log."
+            summary += f"\nwalk: checked events 0 through {last} ({walked} events). {movement}"
+            last_event = r.get("last_event") or {}
+            fields = last_event.get("fields")
+            if isinstance(fields, dict):
+                summary += f"\nlast event {last_event.get('index')}:"
+                for name in sorted(fields):
+                    summary += f"\n  {name}: {fields[name]}"
     lines.append(summary)
     for warning in r.get("warnings") or []:
         lines.append(warning)

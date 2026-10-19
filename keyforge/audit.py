@@ -296,6 +296,9 @@ def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) 
     res["head"] = prev
     res["walked"] = len(log)
     res["walked_last"] = len(log) - 1 if log else None
+    res["walk_continued"] = bool(errors) and first_index is not None and log and first_index < len(log) - 1
+    if log:
+        res["last_event"] = {"index": len(log) - 1, "fields": log[-1]}
     res["mac_verified"] = bool(key) and meta_mac_ok and event_macs > 0 and not errors
     if errors:
         res["ok"] = False

@@ -365,15 +365,32 @@ def _failure_kinds(result: dict) -> list[str]:
     return seen or ["chain mismatch"]
 
 
+def _last_event_lines(result: dict) -> list[str]:
+    """Every stored field of the last audit event, for debugging."""
+    last = result.get("last_event") or {}
+    fields = last.get("fields")
+    if not isinstance(fields, dict):
+        return []
+    lines = [f"last event {last.get('index')}:"]
+    for name in sorted(fields):
+        lines.append(f"  {name}: {fields[name]}")
+    return lines
+
+
 def _walk_line(result: dict) -> str:
     """Say how far the walk went. The last index is the end of the log."""
     walked = result.get("walked")
     last = result.get("walked_last")
     if not isinstance(walked, int) or walked <= 0 or not isinstance(last, int):
         return "walk: the log has no events."
+    continued = result.get("walk_continued")
+    if continued:
+        movement = "The walk continued past the first mismatch and finished at the last event."
+    else:
+        movement = "The first mismatch is the last event. Nothing follows it. The walk still finished at the end of the log."
     return (
         f"walk: checked events 0 through {last} ({walked} events). "
-        "The walk ends at the last event in the log."
+        + movement
     )
 
 
@@ -465,6 +482,8 @@ def _audit_chain(echo, saved: dict) -> None:
         for err in r.get("errors") or [r["error"]]:
             echo(f"AUDIT CHAIN BROKEN: {err}")
         echo(_walk_line(r))
+        for line in _last_event_lines(r):
+            echo(line)
         echo("")
     for warning in r.get("warnings") or []:
         echo(warning)
