@@ -76,12 +76,20 @@ def cmd_create(a, st):
 
 def cmd_list(a, st):
     keys = svc.list_keys(st, a.owner, a.team, a.env, a.status, a.scope, a.label)
-    rows = [k.public() for k in keys]
-    for r in rows: r["scopes"] = " ".join(r["scopes"])
     fmt = "json" if a.json else a.format
     if fmt == "json":
+        # Machine-readable: expires_at stays null; kms is the provider or null (legacy).
         print(json.dumps([k.public() for k in keys], indent=2)); return
-    cols = ["id", "name", "prefix", "env", "owner", "team", "effective_status", "expires_at", "scopes"]
+    cols = ["id", "name", "prefix", "env", "owner", "team", "effective_status", "expires_at", "kms", "scopes"]
+    rows = []
+    for k in keys:
+        r = k.public()
+        r["scopes"] = " ".join(r["scopes"])
+        if not r.get("expires_at"):
+            r["expires_at"] = "NO EXP"
+        if not r.get("kms"):
+            r["kms"] = "-"
+        rows.append(r)
     if fmt == "csv":
         buf = io.StringIO(); w = csv.DictWriter(buf, cols, extrasaction="ignore")
         w.writeheader(); w.writerows(rows); print(buf.getvalue(), end="")

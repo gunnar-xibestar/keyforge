@@ -28,9 +28,11 @@ class EnvelopeTests(unittest.TestCase):
         env = self.st.data["keys"][k.id]["secret_envelope"]
         self.assertEqual(env["alg"], "AES-256-GCM")
         self.assertEqual(env["wrapped_dek"]["provider"], "local")
-        self.assertNotIn("hash", k.public())
-        self.assertNotIn("secret_envelope", k.public())
-        self.assertNotIn("secret", k.public())
+        pub = k.public()
+        self.assertEqual(pub["kms"], "local")
+        self.assertNotIn("hash", pub)
+        self.assertNotIn("secret_envelope", pub)
+        self.assertNotIn("secret", pub)
         key_file = os.path.join(self.d.name, "kms-master.key")
         self.assertEqual(stat.S_IMODE(os.stat(key_file).st_mode), 0o600)
 
@@ -186,6 +188,7 @@ class EnvelopeTests(unittest.TestCase):
             k, secret = svc.create(self.st, name="n", owner="alice")
             self.st.save()
             self.assertEqual(self.st.data["keys"][k.id]["secret_envelope"]["wrapped_dek"]["provider"], "memory")
+            self.assertEqual(k.public()["kms"], "memory")
             self.assertFalse(os.path.exists(os.path.join(self.d.name, "kms-master.key")))
             self.assertEqual(svc.reveal(self.st, k.id), secret)
             other = LocalKms(b"\x22" * 32, provider="memory")
