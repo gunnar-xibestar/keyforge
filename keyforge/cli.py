@@ -154,17 +154,90 @@ def cmd_update(a, st):
     if not a.dry_run: st.save()
     _out(a, {"dry_run": a.dry_run, "key": k.public()}, ("[dry-run] would update:\n" if a.dry_run else "Updated:\n") + _key_text(k))
 
+def _format_verify_report(r: dict) -> str:
+    """Human text for audit --verify: summary, each check + data, keys↔events match."""
+    lines = []
+    if r["ok"]:
+        summary = (f"audit chain OK: {r['checked']} chained event(s), count {r['count']}, "
+                   f"head {r['head']}")
+        if r["mac_verified"]:
+            summary += ", MAC verified"
+        if r["legacy"]:
+            summary += f" ({r['legacy']} legacy unchained event(s) not protected)"
+    else:
+        summary = f"AUDIT CHAIN BROKEN: {r['error']}"
+    lines.append(summary)
+    lines.append("")
+    lines.append("checks")
+    lines.append("------")
+    for c in r.get("checks") or []:
+        if c.get("skipped"):
+            status = "skip"
+        else:
+            status = "ok" if c.get("ok") else "FAIL"
+        lines.append(f"  [{status}] {c['name']}")
+        data = c.get("data") or {}
+        for k, v in data.items():
+            if v is None:
+                continue
+            lines.append(f"         {k}: {v}")
+    match = r.get("match") or {}
+    lines.append("")
+    lines.append("keys and chain events")
+    lines.append("---------------------")
+    lines.append(
+        f"  list keys: {match.get('keys_listed', 0)}  |  "
+        f"chain events: {match.get('events_total', 0)}  |  "
+        f"with key_id: {match.get('events_with_key', 0)}  |  "
+        f"without key_id: {match.get('events_without_key', 0)}"
+    )
+    lines.append("")
+    key_rows = []
+    for k in match.get("keys") or []:
+        actions = k.get("actions") or {}
+        action_s = " ".join(f"{a}×{n}" for a, n in sorted(actions.items())) or "-"
+        key_rows.append({
+            "id": k["id"],
+            "name": k["name"],
+            "prefix": k["prefix"],
+            "created_at": k.get("created_at") or "",
+            "events": k.get("event_count", 0),
+            "actions": action_s,
+        })
+    if key_rows:
+        lines.append(_table(key_rows, ["id", "name", "prefix", "created_at", "events", "actions"]))
+    else:
+        lines.append("  (no keys in store)")
+    orphans = match.get("orphan_events") or []
+    if orphans:
+        lines.append("")
+        lines.append("orphan events (key_id not in list)")
+        lines.append("---------------------------------")
+        lines.append(_table(
+            [{"index": e["index"], "ts": e.get("ts") or "", "action": e.get("action") or "",
+              "key_id": e.get("key_id") or ""} for e in orphans],
+            ["index", "ts", "action", "key_id"],
+        ))
+    no_key = match.get("no_key_events") or []
+    if no_key:
+        lines.append("")
+        lines.append("chain events with no key_id")
+        lines.append("---------------------------")
+        lines.append(_table(
+            [{"index": e["index"], "ts": e.get("ts") or "", "action": e.get("action") or ""}
+             for e in no_key],
+            ["index", "ts", "action"],
+        ))
+    return "\n".join(lines)
+
+
 def cmd_audit(a, st):
     if a.adopt_legacy:
         ev = audit.adopt_legacy(st); st.save()
         _out(a, ev, f"audit chain started; {ev['details']['legacy']} legacy event(s) recorded as unprotected"); return
     if a.verify:
-        r = audit.verify_chain(st.audit_log, st.data.get("audit_meta"), audit.hmac_key())
-        text = (f"audit chain OK: {r['checked']} chained event(s), count {r['count']}, head {r['head']}"
-                + (", MAC verified" if r["mac_verified"] else "") if r["ok"]
-                else f"AUDIT CHAIN BROKEN: {r['error']}")
-        if r["ok"] and r["legacy"]: text += f" ({r['legacy']} legacy unchained event(s) not protected)"
-        _out(a, r, text)
+        r = audit.verify_report(st)
+        _out(a, r, _format_verify_report(r))
         return EXIT_OK if r["ok"] else EXIT_TAMPER
     key_id = st.get(a.key).id if a.key else None
     since = None

@@ -433,6 +433,8 @@ What fails: a missing `hash` or `prev_hash` on a chained event; a `prev_hash` th
 
 Legacy events (indices below `legacy`) are counted and skipped: they are not hashed. On success the command prints `audit chain OK` with the chained-event count, the log count, and the head, plus `MAC verified` when the key checked out.
 
+It then prints each check (`audit_meta`, legacy, MACs, hash continuity, count, head) with **ok** / **FAIL** / **skip** and the data used. A **keys and chain events** section matches `list` keys to audit events by `key_id` (event counts and actions per key), plus orphan events whose `key_id` is no longer in the store and chain events with no `key_id`. `--json` includes the same `checks` and `match` objects.
+
 **`keyforge setup`.** After the KMS choice is saved, setup prints an `Audit chain` title, the store path, then runs the same check as `audit --verify`. It does not exit 7 on failure; it prints `AUDIT CHAIN BROKEN: …` and continues. On success it prints the same `audit chain OK` line.
 
 Setup also repairs and hardens when it can:
