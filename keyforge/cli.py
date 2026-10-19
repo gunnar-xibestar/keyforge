@@ -168,6 +168,11 @@ def _format_verify_report(r: dict) -> str:
         summary = "\n".join(
             f"AUDIT CHAIN BROKEN: {err}" for err in (r.get("errors") or [r["error"]])
         )
+        if r.get("walked"):
+            summary += "\n" + audit.walk_line(r)
+            extra = audit.last_event_lines(r)
+            if extra:
+                summary += "\n" + "\n".join(extra)
     lines.append(summary)
     for warning in r.get("warnings") or []:
         lines.append(warning)
@@ -218,7 +223,7 @@ def _format_verify_report(r: dict) -> str:
         lines.append("orphan events (key_id not in list)")
         lines.append("---------------------------------")
         lines.append(_table(
-            [{"index": e["index"], "date": e.get("date") or "", "ts": e.get("ts") or "",
+            [{"index": audit._shown(e["index"]), "date": e.get("date") or "", "ts": e.get("ts") or "",
               "action": e.get("action") or "", "reason": e.get("reason") or "-",
               "key_id": e.get("key_id") or ""} for e in orphans],
             ["index", "date", "ts", "action", "reason", "key_id"],
@@ -229,7 +234,7 @@ def _format_verify_report(r: dict) -> str:
         lines.append("chain events with no key_id")
         lines.append("---------------------------")
         lines.append(_table(
-            [{"index": e["index"], "date": e.get("date") or "", "ts": e.get("ts") or "",
+            [{"index": audit._shown(e["index"]), "date": e.get("date") or "", "ts": e.get("ts") or "",
               "action": e.get("action") or "", "reason": e.get("reason") or "-"}
              for e in no_key],
             ["index", "date", "ts", "action", "reason"],

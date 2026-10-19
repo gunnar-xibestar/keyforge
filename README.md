@@ -431,14 +431,14 @@ What fails: a missing `hash` or `prev_hash` on a chained event; a `prev_hash` th
 
 ### Error output
 
-`keyforge setup` prints only the summary line. `keyforge audit --verify` prints that same line, then a `checks` list. A failure exits **7**. The summary is `AUDIT CHAIN BROKEN:` plus one message:
+`keyforge setup` prints only the summary line. `keyforge audit --verify` prints that same line, then a `checks` list. A failure exits **7**. The summary is `AUDIT CHAIN BROKEN:` plus one message. In these messages, `N` and `M` are displayed event numbers starting at 1, with the stored 0-based index in parentheses immediately beside the number (the first event in the log is `1(0)`). A walk of 23 events is `checked events 1(0) through 23(22)`. `hmac_from` shown to humans is that same form, for example `hmac_from is 22(21)`. The last-event line is `last event 23(22)`. The stored list index and the stored `hmac_from` field stay 0-based.
 
 | Gate | Summary message |
 |---|---|
 | Missing `hash` or `prev_hash` | `event N is missing hash/prev_hash (stripped?)` |
 | `prev_hash` does not match the previous event | `event N: prev_hash mismatch (event removed, inserted or reordered)` |
 | Content hash does not match the body | `event N: content hash mismatch (event modified)` |
-| Event MAC missing | `event N: MAC missing. hmac_from is M, so this event must carry a MAC from the loaded HMAC key. The event hash matches; there is no mac field.` |
+| Event MAC missing | `event N: MAC missing. hmac_from is M, so this event must carry a MAC from the loaded HMAC key. The event hash matches: the stored hash equals SHA-256 of this event with hash and mac removed, and prev_hash links to the previous event. There is no mac field.` |
 | Event MAC present, but it is not the HMAC of the event hash under the loaded key | `warning: event N: the computed HMAC does not match the stored mac.` The chain stays OK. `HMAC INVALID for event N`. If earlier event MACs matched, `HMAC VALID for events M through N-1`. |
 | Event MAC missing | `event N: MAC missing.` Includes the write-time reason stored on the event: `KEYFORGE_AUDIT_HMAC_KEY_FILE` unset, or the path that could not be read, or a mode other than 0600. |
 | `count` does not match the log length | `event count A != recorded B (events added or truncated)` |

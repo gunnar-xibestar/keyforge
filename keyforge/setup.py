@@ -336,6 +336,45 @@ def _yes(read_line, prompt: str, *, default: bool = False) -> bool:
     return ans in ("y", "yes")
 
 
+def _failure_kinds(result: dict) -> list[str]:
+    """Short labels for the broken-chain lines, without repeating those lines."""
+    kinds = []
+    for err in result.get("errors") or [result.get("error") or ""]:
+        if "MAC missing" in err:
+            kinds.append("MAC missing")
+        elif "prev_hash mismatch" in err:
+            kinds.append("prev_hash mismatch")
+        elif "content hash mismatch" in err:
+            kinds.append("content hash mismatch")
+        elif "missing hash/prev_hash" in err:
+            kinds.append("hash missing")
+        elif "recorded as legacy" in err:
+            kinds.append("legacy event hashed")
+        elif err.startswith("event count"):
+            kinds.append("count mismatch")
+        elif err.startswith("head hash"):
+            kinds.append("head mismatch")
+        elif "metadata MAC" in err:
+            kinds.append("metadata MAC")
+        elif err:
+            kinds.append("chain mismatch")
+    seen = []
+    for kind in kinds:
+        if kind not in seen:
+            seen.append(kind)
+    return seen or ["chain mismatch"]
+
+
+def _last_event_lines(result: dict) -> list[str]:
+    """Every stored field of the last audit event, for debugging."""
+    return audit.last_event_lines(result)
+
+
+def _walk_line(result: dict) -> str:
+    """Say how far the walk went and whether it passed the first mismatch."""
+    return audit.walk_line(result)
+
+
 def _audit_chain(echo, saved: dict) -> None:
     """Verify the audit hash chain, start it when metadata is missing, and create an HMAC key file."""
     path = resolve_path(None)
@@ -423,6 +462,9 @@ def _audit_chain(echo, saved: dict) -> None:
     else:
         for err in r.get("errors") or [r["error"]]:
             echo(f"AUDIT CHAIN BROKEN: {err}")
+        echo(_walk_line(r))
+        for line in _last_event_lines(r):
+            echo(line)
         echo("")
     for warning in r.get("warnings") or []:
         echo(warning)
@@ -463,9 +505,15 @@ def _audit_chain(echo, saved: dict) -> None:
         echo("warning: HMAC is not verifying the audit chain.")
         echo("")
         if key and not r["ok"]:
-            echo("The HMAC key file was loaded. Verification stopped because the chain did not match that key.")
-            echo(f"The failure is: {r['error']}")
-            echo("audit --verify fails for the same reason.")
+            echo("kind: audit chain mismatch. This block is not the Auth0 login result.")
+            if r.get("walk_continued"):
+                echo("The HMAC key file was loaded. The walk continued past the first mismatch.")
+            else:
+                echo("The HMAC key file was loaded. The walk did not continue past the first mismatch.")
+            echo(_walk_line(r))
+            echo("failure kinds: " + ", ".join(_failure_kinds(r)))
+            echo("Each mismatch is an AUDIT CHAIN BROKEN line above.")
+            echo("audit --verify reports the same mismatches.")
             echo("This is not a missing key file, and it is not an unkeyed chain.")
         else:
             if not key:
