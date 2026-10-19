@@ -548,18 +548,24 @@ def verify_report(store, key: bytes | None = None) -> dict:
     else:
         if "mac" not in meta:
             meta_mac_ok = False
-            meta_mac_reason = (
-                "audit_meta has no mac. The loaded HMAC key was not used to sign "
-                "legacy|count|head|hmac_from."
-            )
+            meta_mac_reason = "\n\n".join([
+                "audit_meta has no mac.",
+                "key: the loaded HMAC key was not used to sign legacy|count|head|hmac_from.",
+            ])
         else:
             meta_mac_ok = hmac.compare_digest(meta["mac"], _mac(key, _meta_msg(meta)))
-            meta_mac_reason = (
-                "The stored audit_meta.mac is not HMAC-SHA256 of legacy|count|head|hmac_from "
-                "under the loaded HMAC key. count and head above are the values in that message. "
-                "A later event can be appended without refreshing this tag, so the event chain "
-                "can still match while this tag does not."
-            )
+            meta_mac_reason = "\n\n".join([
+                "audit_meta.mac does not match.",
+                (
+                    "tag: the stored audit_meta.mac is not HMAC-SHA256 of "
+                    "legacy|count|head|hmac_from under the loaded HMAC key."
+                ),
+                "values: count and head above are the values in that message.",
+                (
+                    "chain: a later event can be appended without refreshing this tag, "
+                    "so the event chain can still match while this tag does not."
+                ),
+            ])
         checks.append(_check(
             "audit_meta MAC", meta_mac_ok,
             None if meta_mac_ok else {"reason": meta_mac_reason},
