@@ -75,12 +75,15 @@ def cmd_create(a, st):
          _key_text(k) + f"\n\nSECRET (shown once, store it now):\n  {full}")
 
 def cmd_list(a, st):
+    # list_keys already returns oldest created_at first.
     keys = svc.list_keys(st, a.owner, a.team, a.env, a.status, a.scope, a.label)
     fmt = "json" if a.json else a.format
     if fmt == "json":
         # Machine-readable: expires_at stays null; kms is the provider or null (legacy).
         print(json.dumps([k.public() for k in keys], indent=2)); return
-    cols = ["id", "name", "prefix", "env", "owner", "team", "effective_status", "expires_at", "kms", "scopes"]
+    # team is last; created_at (date) is shown and rows are oldest-first from list_keys.
+    cols = ["id", "name", "prefix", "env", "owner", "effective_status", "created_at",
+            "expires_at", "kms", "scopes", "team"]
     rows = []
     for k in keys:
         r = k.public()
@@ -89,6 +92,8 @@ def cmd_list(a, st):
             r["expires_at"] = "NO EXP"
         if not r.get("kms"):
             r["kms"] = "-"
+        if not r.get("team"):
+            r["team"] = ""
         rows.append(r)
     if fmt == "csv":
         buf = io.StringIO(); w = csv.DictWriter(buf, cols, extrasaction="ignore")

@@ -103,10 +103,12 @@ class TestCLI(Base):
 
     def test_list_kms_and_no_exp(self):
         self.create()  # no expires_at
-        self.create("--name", "dated", "--owner", "alice", "--expires-in", "7d")
-        # JSON: kms provider, expires_at null when unset (not the display string)
+        self.create("--name", "dated", "--owner", "alice", "--expires-in", "7d", "--team", "blue")
+        # JSON: kms provider, expires_at null when unset (not the display string); oldest first
         rc, out, _ = run("list", "--format", "json")
         rows = json.loads(out)
+        self.assertEqual([r["name"] for r in rows], ["n1", "dated"])
+        self.assertLessEqual(rows[0]["created_at"], rows[1]["created_at"])
         by_name = {r["name"]: r for r in rows}
         self.assertEqual(by_name["n1"]["kms"], "local")
         self.assertIsNone(by_name["n1"]["expires_at"])
@@ -114,23 +116,33 @@ class TestCLI(Base):
         self.assertIsNotNone(by_name["dated"]["expires_at"])
         self.assertNotIn("secret_envelope", by_name["n1"])
         self.assertNotIn("hash", by_name["n1"])
-        # Table: NO EXP + kms column
+        # Table: created_at date, NO EXP + kms; team is the last column
         rc, out, _ = run("list")
+        self.assertIn("CREATED_AT", out)
         self.assertIn("KMS", out)
         self.assertIn("local", out)
         self.assertIn("NO EXP", out)
         self.assertIn("n1", out)
-        # CSV: same human-facing placeholders
+        header = out.splitlines()[0]
+        self.assertLess(header.index("OWNER"), header.index("EFFECTIVE_STATUS"))
+        self.assertLess(header.index("CREATED_AT"), header.index("EXPIRES_AT"))
+        self.assertLess(header.index("SCOPES"), header.index("TEAM"))
+        self.assertGreater(header.index("TEAM"), header.index("KMS"))
+        # CSV: same human-facing placeholders; team last; oldest first
         rc, out, _ = run("list", "--format", "csv")
         header, *body = out.strip().splitlines()
         cols = header.split(",")
+        self.assertEqual(cols[-1], "team")
+        self.assertEqual(cols.index("created_at"), cols.index("effective_status") + 1)
         self.assertEqual(cols.index("kms"), cols.index("expires_at") + 1)
+        self.assertEqual([line.split(",")[1] for line in body], ["n1", "dated"])
         n1 = next(line for line in body if line.split(",")[1] == "n1")
         dated = next(line for line in body if line.split(",")[1] == "dated")
         self.assertEqual(n1.split(",")[cols.index("expires_at")], "NO EXP")
         self.assertEqual(n1.split(",")[cols.index("kms")], "local")
         self.assertNotEqual(dated.split(",")[cols.index("expires_at")], "NO EXP")
         self.assertEqual(dated.split(",")[cols.index("kms")], "local")
+        self.assertEqual(dated.split(",")[cols.index("team")], "blue")
         # Legacy hash-only record: null kms in JSON, "-" / NO EXP in table+csv
         st = Store(self.path)
         kid = next(k for k, v in st.data["keys"].items() if v["name"] == "n1")
