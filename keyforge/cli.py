@@ -167,6 +167,8 @@ def _format_verify_report(r: dict) -> str:
     else:
         summary = f"AUDIT CHAIN BROKEN: {r['error']}"
     lines.append(summary)
+    for warning in r.get("warnings") or []:
+        lines.append(warning)
     lines.append("")
     lines.append("checks")
     lines.append("------")

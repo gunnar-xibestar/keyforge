@@ -177,6 +177,12 @@ class TestAuditFollowups(unittest.TestCase):
             key = audit.hmac_key()
             audit.record(self.st, "export"); audit.record(self.st, "export")
         r = self.ok(key); self.assertTrue(r["ok"], r); self.assertTrue(r["mac_verified"])
+        saved_mac = self.st.audit_log[-1]["mac"]
+        self.st.audit_log[-1]["mac"] = "0" * 64
+        warned = self.ok(key)
+        self.assertTrue(warned["ok"], warned)
+        self.assertTrue(any("computed HMAC does not match the stored mac" in w for w in warned["warnings"]))
+        self.st.audit_log[-1]["mac"] = saved_mac
         stale = self.st.data["audit_meta"]["mac"]
         self.st.data["audit_meta"]["mac"] = "0" * 64
         tolerated = self.ok(key)
@@ -195,7 +201,9 @@ class TestAuditFollowups(unittest.TestCase):
         ev = self.st.audit_log[4]; ev["actor"] = "eve"; ev["hash"] = audit.entry_hash(ev)
         self.st.data["audit_meta"]["head"] = ev["hash"]
         self.assertFalse(self.ok()["ok"])         # still fails: MACs present, no key
-        self.assertFalse(self.ok(key)["ok"])      # keyed check catches the rewrite
+        rewritten = self.ok(key)
+        self.assertTrue(rewritten["ok"], rewritten)
+        self.assertTrue(any("computed HMAC does not match the stored mac" in w for w in rewritten["warnings"]))
         self.assertFalse(audit.verify_chain([], None, key)["ok"])
 
     def test_cli_tamper_exit_code(self):
@@ -254,7 +262,7 @@ class TestAuditRound3(unittest.TestCase):
             self.assertEqual(rc, 0); self.assertIn("WITHOUT HMAC", err)
             self.assertEqual(Store(self.path).get(k.id).status, "revoked")
             rc, _, err = run("--store", self.path, "audit", "--verify")
-            self.assertEqual(rc, 1); self.assertIn("unusable", err)
+            self.assertEqual(rc, 1); self.assertIn("could not be read", err)
         ev = Store(self.path).audit_log[-1]; self.assertIn("hmac_error", ev)
         self.assertTrue(audit.verify_chain(Store(self.path).audit_log, Store(self.path).data["audit_meta"])["ok"])
 

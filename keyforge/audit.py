@@ -56,18 +56,25 @@ def hmac_key() -> bytes | None:
     try:
         fd = os.open(p, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     except OSError as e:
-        raise KeyForgeError(f"audit HMAC key file {p} unusable: {e.strerror}")
+        raise KeyForgeError(
+            f"KEYFORGE_AUDIT_HMAC_KEY_FILE is {p}. The file could not be read ({e.strerror})."
+        )
     try:
         st = os.fstat(fd)
         if st.st_mode & 0o077:
-            raise KeyForgeError(f"audit HMAC key file {p} must not be group/world accessible (chmod 600)")
+            raise KeyForgeError(
+                f"KEYFORGE_AUDIT_HMAC_KEY_FILE is {p}. Mode is {oct(st.st_mode & 0o777)}; "
+                "expected 0600 (chmod 600)."
+            )
         with os.fdopen(fd, "rb") as f:
             fd = None
             k = f.read().strip()
     finally:
         if fd is not None: os.close(fd)
     if len(k) < 16:
-        raise KeyForgeError("audit HMAC key file must contain at least 16 bytes")
+        raise KeyForgeError(
+            f"KEYFORGE_AUDIT_HMAC_KEY_FILE is {p}. The file has {len(k)} bytes; at least 16 are required."
+        )
     return k
 
 def entry_hash(ev: dict) -> str:
@@ -83,28 +90,41 @@ def _event_mac_error(i: int, ev: dict, key: bytes, hmac_from: int) -> str | None
     The hash chain has already matched through this event.
     """
     if "mac" not in ev:
+        write_time = ev.get("hmac_error")
+        if write_time:
+            why = f" At write time: {write_time}"
+        else:
+            why = " The write did not record why the mac field was omitted."
         return (
             f"event {i}: MAC missing. hmac_from is {hmac_from}, so this event must carry a MAC "
             "from the loaded HMAC key. The event hash matches; there is no mac field."
-        )
-    if not hmac.compare_digest(ev["mac"], _mac(key, ev["hash"])):
-        if i == hmac_from:
-            verdict = (
-                f"HMAC INVALID for event {i}. This is the first event that must have a MAC, "
-                "and this key does not match it."
-            )
-        else:
-            verdict = (
-                f"HMAC VALID for events {hmac_from} through {i - 1}. "
-                f"HMAC INVALID for event {i}. The same key matches those earlier events."
-            )
-        return (
-            f"event {i}: MAC invalid. {verdict} "
-            "The stored mac is not HMAC-SHA256 of this event's hash under the HMAC key that was loaded. "
-            "The hash chain matches through this event. This key did not sign the event, "
-            "or the event changed after the MAC was written."
+            + why
         )
     return None
+
+
+def _event_mac_warning(i: int, ev: dict, key: bytes, hmac_from: int) -> str | None:
+    """Warning when the computed HMAC and the stored ``mac`` differ.
+
+    The hash chain has already matched. This is not a broken chain: the loaded key's
+    HMAC-SHA256 of the event hash is not the stored mac.
+    """
+    if "mac" not in ev:
+        return None
+    if hmac.compare_digest(ev["mac"], _mac(key, ev["hash"])):
+        return None
+    if i == hmac_from:
+        span = f"HMAC INVALID for event {i}. This is the first event that must have a MAC."
+    else:
+        span = (
+            f"HMAC VALID for events {hmac_from} through {i - 1}. "
+            f"HMAC INVALID for event {i}."
+        )
+    return (
+        f"warning: event {i}: the computed HMAC does not match the stored mac. {span} "
+        "The loaded HMAC key produces HMAC-SHA256 of this event's hash, and that value "
+        "is not the stored mac. The hash chain matches through this event."
+    )
 
 def _meta_msg(m: dict) -> str:
     return f"{m.get('legacy')}|{m.get('count')}|{m.get('head')}|{m.get('hmac_from')}"
@@ -127,13 +147,24 @@ def record(store, action: str, key_id: str | None = None, **details) -> dict:
     ev["hash"] = entry_hash(ev)
     # Writes are never blocked by a key problem (a revoke must always land). Instead the event is
     # stored without a MAC, flagged, and a warning printed; `audit --verify` with the key then fails.
-    try:
-        key = hmac_key()
-    except KeyForgeError as e:
-        key = None
-        ev["hmac_error"] = str(e)[:200]; ev["hash"] = entry_hash(ev)
+    key = None
+    key_failure = None
+    if not os.environ.get("KEYFORGE_AUDIT_HMAC_KEY_FILE") and _chain_expects_hmac(meta):
+        stayed = meta.get("hmac_from")
+        key_failure = (
+            "KEYFORGE_AUDIT_HMAC_KEY_FILE was unset. No HMAC key file was read. "
+            f"hmac_from stayed {stayed}."
+        )
+    else:
+        try:
+            key = hmac_key()
+        except KeyForgeError as e:
+            key_failure = str(e)[:300]
+    if key_failure:
+        ev["hmac_error"] = key_failure
+        ev["hash"] = entry_hash(ev)
         meta.pop("mac", None)
-        print(f"keyforge: warning: audit event written WITHOUT HMAC: {e}", file=sys.stderr)
+        print(f"keyforge: warning: audit event written WITHOUT HMAC: {key_failure}", file=sys.stderr)
     if key:
         meta.setdefault("hmac_from", len(log))
         ev["mac"] = _mac(key, ev["hash"])
@@ -173,7 +204,7 @@ def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) 
     supplied, verification fails — the secret must be present to check those tags.
     """
     res = {"ok": True, "checked": 0, "legacy": 0, "count": len(log), "head": GENESIS,
-           "mac_verified": False, "error": None, "index": None}
+           "mac_verified": False, "error": None, "index": None, "warnings": []}
     def fail(msg, i=None): return {**res, "ok": False, "error": msg, "index": i}
     if meta is None:
         # New stores always get audit_meta at creation and old stores get it on their first new
@@ -209,10 +240,14 @@ def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) 
         if entry_hash(ev) != ev["hash"]:
             return fail(f"event {i}: content hash mismatch (event modified)", i)
         if key and i >= hmac_from:
-            event_macs += 1
             mac_error = _event_mac_error(i, ev, key, hmac_from)
             if mac_error:
                 return fail(mac_error, i)
+            mac_warning = _event_mac_warning(i, ev, key, hmac_from)
+            if mac_warning:
+                res["warnings"].append(mac_warning)
+            else:
+                event_macs += 1
         prev = ev["hash"]; res["checked"] += 1
     if meta.get("count") != len(log):
         return fail(f"event count {len(log)} != recorded {meta.get('count')} (events added or truncated)")
@@ -446,6 +481,9 @@ def verify_report(store, key: bytes | None = None) -> dict:
                 if mac_error:
                     event_mac_ok = False
                     event_mac_err = mac_error
+                elif _event_mac_warning(i, ev, key, hmac_from):
+                    event_mac_ok = False
+                    event_mac_err = _event_mac_warning(i, ev, key, hmac_from)
                     chain_ok = False
                     chain_err = event_mac_err
                     chain_index = i
