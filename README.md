@@ -232,7 +232,7 @@ Auth0, when enabled, only gates who may *start* the server (`keys:verify`); API 
 keyforge create --name demo --owner you --scope read:packets
 ```
 
-Creates a key named `demo` owned by `you`, with scope `read:packets` (required for `/packets`). The full secret (`kf_test_…` / `kf_live_…`) is printed **once** — copy it now. Only the hash is stored.
+Creates a key named `demo` owned by `you`, with scope `read:packets` (required for `/packets`). The full secret (`kf_test_…` / `kf_live_…`) is printed **once** — copy it now. The store keeps a PBKDF2 hash and an AES-GCM envelope (`secret_envelope`), never the plaintext.
 
 **2. Start the server**
 
@@ -430,9 +430,8 @@ What fails: a missing `hash` or `prev_hash` on a chained event; a `prev_hash` th
 | Missing `hash` or `prev_hash` | `event N is missing hash/prev_hash (stripped?)` |
 | `prev_hash` does not match the previous event | `event N: prev_hash mismatch (event removed, inserted or reordered)` |
 | Content hash does not match the body | `event N: content hash mismatch (event modified)` |
-| Event MAC missing | `event N: MAC missing.` Then a blank line between each source: `chain:` (`hmac_from`), `hash:` (SHA-256 of the event with hash and mac removed, and `prev_hash`), `mac:` (no mac field), `write:` (`none recorded` or the stored write-time reason), and `event:` with `ts`, `action`, `key_id`, `actor`, and `os_user` on their own lines. |
+| Event MAC missing | `event N: MAC missing.` Then a blank line between each source: `chain:` (`hmac_from`), `hash:` (SHA-256 of the event with hash and mac removed, and `prev_hash`), `mac:` (no mac field), `write:` (`none recorded`, or the stored write-time reason such as `KEYFORGE_AUDIT_HMAC_KEY_FILE` unset, a path that could not be read, or a mode other than 0600), and `event:` with `ts`, `action`, `key_id`, `actor`, and `os_user` on their own lines. |
 | Event MAC present, but it is not the HMAC of the event hash under the loaded key | `warning: event N: the computed HMAC does not match the stored mac.` The chain stays OK. `HMAC INVALID for event N`. If earlier event MACs matched, `HMAC VALID for events M through N-1`. |
-| Event MAC missing | `event N: MAC missing.` Includes the write-time reason stored on the event: `KEYFORGE_AUDIT_HMAC_KEY_FILE` unset, or the path that could not be read, or a mode other than 0600. |
 | `count` does not match the log length | `event count A != recorded B (events added or truncated)` |
 | `head` does not match the last chained hash | `head hash does not match metadata` |
 | Metadata MAC wrong, and no event MAC was checked | `audit metadata MAC invalid` |
@@ -553,4 +552,4 @@ A file outside `~/.keyforge` is left alone, including one named by `KEYFORGE_STO
 
 ## Program extensibility
 
-Notes that are useful beyond this page, including the Auth0 operator use-case draft, live in [Extensibility](EXTENSIBILITY.md).
+Notes that are useful beyond this page, including Auth0 operator use cases, live in [Extensibility](EXTENSIBILITY.md).
