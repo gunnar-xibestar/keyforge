@@ -390,9 +390,10 @@ def _hmac_key_missing_message() -> str:
         )
     return (
         "HMAC key required: the audit chain has MACs, but KEYFORGE_AUDIT_HMAC_KEY_FILE "
-        "is unset in this process. keyforge.env was loaded and did not assign it, and "
-        "the shell did not export it. Verify does not open the default "
-        "~/.keyforge/audit-hmac.key unless that variable names the file. "
+        "is unset in this process. keyforge.env has no line for it, and the shell did not "
+        "export it. Setup used to rewrite that file without the line when the variable was "
+        "already set in the setup process, so the next command lost it. Verify does not open "
+        "the default ~/.keyforge/audit-hmac.key unless the variable names the file. "
         "The store still has mac and hmac_from from an earlier process that had the key."
     )
 

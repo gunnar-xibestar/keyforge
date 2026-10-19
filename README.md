@@ -444,7 +444,7 @@ What fails: a missing `hash` or `prev_hash` on a chained event; a `prev_hash` th
 | `count` does not match the log length | `event count A != recorded B (events added or truncated)` |
 | `head` does not match the last chained hash | `head hash does not match metadata` |
 | Metadata MAC wrong, and no event MAC was checked | `audit metadata MAC invalid` |
-| MACs are present and the HMAC key was not supplied | `HMAC key required: the audit chain has MACs, but KEYFORGE_AUDIT_HMAC_KEY_FILE is unset in this process.` The line also says `keyforge.env` was loaded and did not assign it, and verify does not open `~/.keyforge/audit-hmac.key` unless the variable names that file. |
+| MACs are present and the HMAC key was not supplied | `HMAC key required: the audit chain has MACs, but KEYFORGE_AUDIT_HMAC_KEY_FILE is unset in this process.` `keyforge.env` has no line for it. Setup used to drop that line when it rewrote the file while the variable was already set. Verify does not open `~/.keyforge/audit-hmac.key` unless the variable names that file. |
 
 A stale metadata MAC does not get its own summary line. The summary stays `audit chain OK: …, MAC verified`.
 

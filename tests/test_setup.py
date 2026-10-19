@@ -113,6 +113,8 @@ class SetupTests(unittest.TestCase):
         self.assertNotIn("warning: a new HMAC key was created", text)
         self.assertNotIn("audit HMAC key created:", text)
         self.assertNotIn("warning: HMAC is not verifying", text)
+        body = Path(self.env_file).read_text()
+        self.assertIn("KEYFORGE_AUDIT_HMAC_KEY_FILE=", body)
 
     def test_setup_warns_when_hmac_secret_is_unusable(self):
         bad = os.path.join(self.d.name, "missing-hmac.key")
