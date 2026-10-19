@@ -188,6 +188,11 @@ def _format_verify_report(r: dict) -> str:
     lines.append("")
     lines.append("checks")
     lines.append("------")
+    if r.get("count") is not None:
+        lines.append(f"  count: {r['count']}")
+    if r.get("head"):
+        lines.append(f"  head: {r['head']}")
+    lines.append("")
     for c in r.get("checks") or []:
         if c.get("skipped"):
             status = "skip"
@@ -198,7 +203,15 @@ def _format_verify_report(r: dict) -> str:
         for k, v in data.items():
             if v is None:
                 continue
-            lines.append(f"         {k}: {v}")
+            text = str(v)
+            if "\n" in text:
+                lines.append(f"         {k}:")
+                lines.append("")
+                for piece in text.splitlines():
+                    lines.append(f"           {piece}" if piece else "")
+                lines.append("")
+            else:
+                lines.append(f"         {k}: {text}")
     match = r.get("match") or {}
     lines.append("")
     lines.append("keys and chain events")

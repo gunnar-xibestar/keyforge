@@ -90,16 +90,16 @@ def _shown(index: int) -> str:
 
 
 def _event_facts(ev: dict) -> str:
-    """Fields already stored on the event, for a mismatch line."""
-    parts = []
+    """Fields stored on the event, one per line."""
+    lines = []
     for name in ("ts", "action", "key_id", "actor", "os_user"):
         value = ev.get(name)
         if value is None or value == "":
             continue
-        parts.append(f"{name}={value}")
-    if not parts:
+        lines.append(f"  {name}: {value}")
+    if not lines:
         return ""
-    return " Event: " + ", ".join(parts) + "."
+    return "event:\n" + "\n".join(lines)
 
 
 def _event_mac_error(i: int, ev: dict, key: bytes, hmac_from: int) -> str | None:
@@ -110,17 +110,26 @@ def _event_mac_error(i: int, ev: dict, key: bytes, hmac_from: int) -> str | None
     if "mac" not in ev:
         write_time = ev.get("hmac_error")
         if write_time:
-            why = f" At write time: {write_time}"
+            why = f"write: {write_time}"
         else:
-            why = " none recorded"
-        return (
-            f"event {_shown(i)}: MAC missing. hmac_from is {_shown(hmac_from)}, so this event must carry a MAC "
-            "from the loaded HMAC key. The event hash matches: the stored hash equals SHA-256 of "
-            "this event with hash and mac removed, and prev_hash links to the previous event. "
-            "There is no mac field."
-            + why
-            + _event_facts(ev)
-        )
+            why = "write: none recorded"
+        blocks = [
+            f"event {_shown(i)}: MAC missing.",
+            (
+                f"chain: hmac_from is {_shown(hmac_from)}, so this event must carry a MAC "
+                "from the loaded HMAC key."
+            ),
+            (
+                "hash: the stored hash equals SHA-256 of this event with hash and mac removed, "
+                "and prev_hash links to the previous event."
+            ),
+            "mac: there is no mac field.",
+            why,
+        ]
+        facts = _event_facts(ev)
+        if facts:
+            blocks.append(facts)
+        return "\n\n".join(blocks)
     return None
 
 
@@ -503,14 +512,14 @@ def verify_report(store, key: bytes | None = None) -> dict:
     log = store.audit_log
     result = verify_chain(log, meta, key)
     checks = []
+    hmac_from_raw = meta.get("hmac_from") if isinstance(meta, dict) else None
+    hmac_from_shown = _shown(hmac_from_raw) if isinstance(hmac_from_raw, int) else hmac_from_raw
     checks.append(_check(
         "audit_meta present",
         meta is not None,
         None if meta is None else {
             "legacy": meta.get("legacy"),
-            "count": meta.get("count"),
-            "head": meta.get("head"),
-            "hmac_from": meta.get("hmac_from"),
+            "hmac_from": hmac_from_shown,
             "mac": bool(meta.get("mac")),
         },
     ))
@@ -519,21 +528,16 @@ def verify_report(store, key: bytes | None = None) -> dict:
 
     legacy = meta.get("legacy")
     legacy_ok = isinstance(legacy, int) and 0 <= legacy <= len(log)
-    checks.append(_check(
-        "legacy count valid",
-        legacy_ok,
-        {"legacy": legacy, "log_length": len(log)},
-    ))
+    legacy_data = None
+    if not legacy_ok:
+        legacy_data = {"legacy": legacy, "log_length": len(log)}
+    checks.append(_check("legacy count valid", legacy_ok, legacy_data))
 
     expects_hmac = _chain_expects_hmac(meta)
     if key is None and expects_hmac:
         checks.append(_check(
             "audit_meta MAC", False,
-            {
-                "reason": _hmac_key_missing_message(),
-                "mac_present": "mac" in meta,
-                "hmac_from": meta.get("hmac_from"),
-            },
+            {"reason": _hmac_key_missing_message()},
         ))
     elif key is None:
         checks.append(_check(
@@ -542,11 +546,23 @@ def verify_report(store, key: bytes | None = None) -> dict:
             skipped=True,
         ))
     else:
-        meta_mac_ok = "mac" in meta and hmac.compare_digest(
-            meta["mac"], _mac(key, _meta_msg(meta)))
+        if "mac" not in meta:
+            meta_mac_ok = False
+            meta_mac_reason = (
+                "audit_meta has no mac. The loaded HMAC key was not used to sign "
+                "legacy|count|head|hmac_from."
+            )
+        else:
+            meta_mac_ok = hmac.compare_digest(meta["mac"], _mac(key, _meta_msg(meta)))
+            meta_mac_reason = (
+                "The stored audit_meta.mac is not HMAC-SHA256 of legacy|count|head|hmac_from "
+                "under the loaded HMAC key. count and head above are the values in that message. "
+                "A later event can be appended without refreshing this tag, so the event chain "
+                "can still match while this tag does not."
+            )
         checks.append(_check(
             "audit_meta MAC", meta_mac_ok,
-            {"hmac_from": meta.get("hmac_from"), "mac_present": "mac" in meta},
+            None if meta_mac_ok else {"reason": meta_mac_reason},
         ))
 
     # Walk the chain independently so the report can show pass/fail data per check.
@@ -598,36 +614,30 @@ def verify_report(store, key: bytes | None = None) -> dict:
                 prev = ev["hash"]
             checked += 1
 
-    chain_data = {
-        "checked": checked if chain_ok else result["checked"],
-        "legacy_skipped": legacy if legacy_ok else result["legacy"],
-        "head": prev if chain_ok else result["head"],
-    }
+    chain_data = None
     if not chain_ok:
-        chain_data["error"] = chain_err
-        chain_data["index"] = chain_index
+        chain_data = {"error": chain_err}
+        if chain_index is not None:
+            chain_data["event"] = _shown(chain_index)
     checks.append(_check("hash chain continuity and content hashes", chain_ok, chain_data))
 
     count_ok = meta.get("count") == len(log)
     checks.append(_check(
         "count matches log length", count_ok,
-        {"meta_count": meta.get("count"), "log_length": len(log)},
+        None if count_ok else {"meta_count": meta.get("count"), "log_length": len(log)},
     ))
 
     computed_head = prev if (legacy_ok and chain_ok) else result["head"]
     head_ok = chain_ok and count_ok and meta.get("head") == computed_head
     checks.append(_check(
         "head matches last chained hash", head_ok,
-        {"meta_head": meta.get("head"), "computed_head": computed_head},
+        None if head_ok else {"meta_head": meta.get("head"), "computed_head": computed_head},
     ))
 
     if key is None and expects_hmac:
         checks.append(_check(
             "event MACs from hmac_from", False,
-            {
-                "reason": _hmac_key_missing_message(),
-                "hmac_from": meta.get("hmac_from"),
-            },
+            {"reason": _hmac_key_missing_message()},
         ))
     elif key is None:
         checks.append(_check(
@@ -639,11 +649,7 @@ def verify_report(store, key: bytes | None = None) -> dict:
         checks.append(_check(
             "event MACs from hmac_from",
             event_mac_ok and chain_ok,
-            {
-                "hmac_from": meta.get("hmac_from"),
-                "mac_verified": bool(result["mac_verified"] and event_mac_ok and result["ok"]),
-                **({"error": "; ".join(event_mac_errs)} if event_mac_errs else {}),
-            },
+            {"error": "\n\n".join(event_mac_errs)} if event_mac_errs else None,
         ))
 
     return {**result, "checks": checks, "match": key_event_match(store)}
