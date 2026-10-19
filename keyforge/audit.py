@@ -97,7 +97,9 @@ def _event_mac_error(i: int, ev: dict, key: bytes, hmac_from: int) -> str | None
             why = " none recorded"
         return (
             f"event {i}: MAC missing. hmac_from is {hmac_from}, so this event must carry a MAC "
-            "from the loaded HMAC key. The event hash matches; there is no mac field."
+            "from the loaded HMAC key. The event hash matches: the stored hash equals SHA-256 of "
+            "this event with hash and mac removed, and prev_hash links to the previous event. "
+            "There is no mac field."
             + why
         )
     return None
