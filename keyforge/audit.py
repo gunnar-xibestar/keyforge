@@ -170,6 +170,196 @@ def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) 
     res["head"] = prev; res["mac_verified"] = bool(key)
     return res
 
+
+def _check(name: str, ok: bool, data: dict | None = None, *, skipped: bool = False) -> dict:
+    row = {"name": name, "ok": ok, "skipped": skipped}
+    if data is not None:
+        row["data"] = data
+    return row
+
+
+def key_event_match(store) -> dict:
+    """Relate store keys (as in ``list``) to audit events that name them."""
+    keys = list(store.all())
+    by_id = {k.id: k for k in keys}
+    log = store.audit_log
+    events_by_key: dict[str, list] = {k.id: [] for k in keys}
+    orphan: list[dict] = []
+    no_key: list[dict] = []
+    for i, ev in enumerate(log):
+        kid = ev.get("key_id")
+        summary = {
+            "index": i,
+            "ts": ev.get("ts"),
+            "action": ev.get("action"),
+            "key_id": kid,
+            "hash": (ev.get("hash") or "")[:12] or None,
+        }
+        if not kid:
+            no_key.append(summary)
+        elif kid in events_by_key:
+            events_by_key[kid].append(summary)
+        else:
+            orphan.append(summary)
+    listed = []
+    for k in sorted(keys, key=lambda x: x.created_at):
+        evs = events_by_key[k.id]
+        actions: dict[str, int] = {}
+        for e in evs:
+            actions[e["action"]] = actions.get(e["action"], 0) + 1
+        listed.append({
+            "id": k.id,
+            "name": k.name,
+            "prefix": k.prefix,
+            "created_at": k.created_at,
+            "event_count": len(evs),
+            "actions": actions,
+            "events": evs,
+        })
+    return {
+        "keys_listed": len(listed),
+        "events_total": len(log),
+        "events_with_key": sum(1 for e in log if e.get("key_id")),
+        "events_without_key": len(no_key),
+        "orphan_events": orphan,
+        "no_key_events": no_key,
+        "keys": listed,
+    }
+
+
+def verify_report(store, key: bytes | None = None) -> dict:
+    """Run verify_chain and attach check details plus key↔event matching for display.
+
+    If ``key`` is omitted, loads ``hmac_key()`` (raises when the env var is set but unusable).
+    """
+    if key is None:
+        key = hmac_key()
+    meta = store.data.get("audit_meta")
+    log = store.audit_log
+    result = verify_chain(log, meta, key)
+    checks = []
+    checks.append(_check(
+        "audit_meta present",
+        meta is not None,
+        None if meta is None else {
+            "legacy": meta.get("legacy"),
+            "count": meta.get("count"),
+            "head": meta.get("head"),
+            "hmac_from": meta.get("hmac_from"),
+            "mac": bool(meta.get("mac")),
+        },
+    ))
+    if meta is None:
+        return {**result, "checks": checks, "match": key_event_match(store)}
+
+    legacy = meta.get("legacy")
+    legacy_ok = isinstance(legacy, int) and 0 <= legacy <= len(log)
+    checks.append(_check(
+        "legacy count valid",
+        legacy_ok,
+        {"legacy": legacy, "log_length": len(log)},
+    ))
+
+    if key is None:
+        checks.append(_check(
+            "audit_meta MAC", True,
+            {"reason": "KEYFORGE_AUDIT_HMAC_KEY_FILE unset; unkeyed verify"},
+            skipped=True,
+        ))
+    else:
+        meta_mac_ok = "mac" in meta and hmac.compare_digest(
+            meta["mac"], _mac(key, _meta_msg(meta)))
+        checks.append(_check(
+            "audit_meta MAC", meta_mac_ok,
+            {"hmac_from": meta.get("hmac_from"), "mac_present": "mac" in meta},
+        ))
+
+    # Walk the chain independently so the report can show pass/fail data per check.
+    chain_ok = True
+    chain_err = None
+    chain_index = None
+    checked = 0
+    prev = GENESIS
+    hmac_from = meta.get("hmac_from", len(log)) if isinstance(meta.get("hmac_from"), int) else len(log)
+    event_mac_ok = True
+    event_mac_err = None
+    if legacy_ok:
+        for i, ev in enumerate(log):
+            if i < legacy:
+                if "hash" in ev or "prev_hash" in ev:
+                    chain_ok = False
+                    chain_err = f"event {i} is chained but recorded as legacy"
+                    chain_index = i
+                    break
+                continue
+            if "hash" not in ev or "prev_hash" not in ev:
+                chain_ok = False
+                chain_err = f"event {i} is missing hash/prev_hash"
+                chain_index = i
+                break
+            if ev["prev_hash"] != prev:
+                chain_ok = False
+                chain_err = f"event {i}: prev_hash mismatch"
+                chain_index = i
+                break
+            if entry_hash(ev) != ev["hash"]:
+                chain_ok = False
+                chain_err = f"event {i}: content hash mismatch"
+                chain_index = i
+                break
+            if key and i >= hmac_from:
+                if "mac" not in ev or not hmac.compare_digest(ev["mac"], _mac(key, ev["hash"])):
+                    event_mac_ok = False
+                    event_mac_err = f"event {i}: MAC invalid or missing"
+                    chain_ok = False
+                    chain_err = event_mac_err
+                    chain_index = i
+                    break
+            prev = ev["hash"]
+            checked += 1
+
+    chain_data = {
+        "checked": checked if chain_ok else result["checked"],
+        "legacy_skipped": legacy if legacy_ok else result["legacy"],
+        "head": prev if chain_ok else result["head"],
+    }
+    if not chain_ok:
+        chain_data["error"] = chain_err
+        chain_data["index"] = chain_index
+    checks.append(_check("hash chain continuity and content hashes", chain_ok, chain_data))
+
+    count_ok = meta.get("count") == len(log)
+    checks.append(_check(
+        "count matches log length", count_ok,
+        {"meta_count": meta.get("count"), "log_length": len(log)},
+    ))
+
+    computed_head = prev if (legacy_ok and chain_ok) else result["head"]
+    head_ok = chain_ok and count_ok and meta.get("head") == computed_head
+    checks.append(_check(
+        "head matches last chained hash", head_ok,
+        {"meta_head": meta.get("head"), "computed_head": computed_head},
+    ))
+
+    if key is None:
+        checks.append(_check(
+            "event MACs from hmac_from", True,
+            {"reason": "no HMAC key; event macs not checked"},
+            skipped=True,
+        ))
+    else:
+        checks.append(_check(
+            "event MACs from hmac_from",
+            event_mac_ok and chain_ok,
+            {
+                "hmac_from": meta.get("hmac_from"),
+                "mac_verified": bool(result["mac_verified"] and event_mac_ok and result["ok"]),
+                **({"error": event_mac_err} if event_mac_err else {}),
+            },
+        ))
+
+    return {**result, "checks": checks, "match": key_event_match(store)}
+
 def adopt_legacy(store) -> dict:
     """Explicitly start chaining on a store that has only legacy events and no metadata."""
     if store.data.get("audit_meta") is not None:

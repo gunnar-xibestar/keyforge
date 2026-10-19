@@ -59,12 +59,24 @@ class TestAuditIntegrity(unittest.TestCase):
         self.st.save()
         rc, out, _ = run("--store", self.path, "audit", "--verify"); self.assertEqual(rc, 0, out)
         self.assertIn("audit chain OK", out)
+        self.assertIn("checks", out)
+        self.assertIn("[ok] audit_meta present", out)
+        self.assertIn("[ok] hash chain continuity and content hashes", out)
+        self.assertIn("keys and chain events", out)
+        self.assertIn("list keys:", out)
+        self.assertIn(self.st.all()[0].id, out)
+        self.assertIn("create", out)
         rc, out, _ = run("--store", self.path, "audit"); self.assertIn("OS_USER", out); self.assertIn(self.real, out)
         with open(self.path) as f: data = json.load(f)
         data["audit"][0]["action"] = "nothing_to_see"
         with open(self.path, "w") as f: json.dump(data, f)
         rc, out, _ = run("--store", self.path, "--json", "audit", "--verify")
-        self.assertEqual(rc, 7); self.assertFalse(json.loads(out)["ok"])
+        self.assertEqual(rc, 7)
+        payload = json.loads(out)
+        self.assertFalse(payload["ok"])
+        self.assertIn("checks", payload)
+        self.assertIn("match", payload)
+        self.assertGreaterEqual(payload["match"]["keys_listed"], 1)
 
 class TestAuditFollowups(unittest.TestCase):
     def setUp(self):
