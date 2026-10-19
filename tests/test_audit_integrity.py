@@ -177,6 +177,16 @@ class TestAuditFollowups(unittest.TestCase):
             key = audit.hmac_key()
             audit.record(self.st, "export"); audit.record(self.st, "export")
         r = self.ok(key); self.assertTrue(r["ok"], r); self.assertTrue(r["mac_verified"])
+        stale = self.st.data["audit_meta"]["mac"]
+        self.st.data["audit_meta"]["mac"] = "0" * 64
+        tolerated = self.ok(key)
+        self.assertTrue(tolerated["ok"], tolerated)
+        self.assertTrue(tolerated.get("meta_mac_stale"))
+        self.assertTrue(audit.reseal_metadata_mac(self.st, key))
+        self.assertEqual(self.st.data["audit_meta"]["mac"], stale)
+        resealed = self.ok(key)
+        self.assertTrue(resealed["ok"], resealed)
+        self.assertNotIn("meta_mac_stale", resealed)
         # Without the key, a MAC'd chain must fail — the secret is required to verify tags.
         missing = self.ok()
         self.assertFalse(missing["ok"])

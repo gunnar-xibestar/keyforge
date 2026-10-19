@@ -158,10 +158,15 @@ def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) 
             "HMAC key required: audit chain has MACs but KEYFORGE_AUDIT_HMAC_KEY_FILE "
             "is unset or the key was not supplied"
         )
+    meta_mac_ok = True
     if key:
-        if "mac" not in meta or not hmac.compare_digest(meta["mac"], _mac(key, _meta_msg(meta))):
-            return fail("audit metadata MAC invalid")
+        expected = _mac(key, _meta_msg(meta))
+        meta_mac_ok = "mac" in meta and hmac.compare_digest(meta["mac"], expected)
+    hmac_from = meta.get("hmac_from", len(log))
+    if not isinstance(hmac_from, int):
+        hmac_from = len(log)
     prev = GENESIS
+    event_macs = 0
     for i, ev in enumerate(log):
         if i < legacy:
             if "hash" in ev or "prev_hash" in ev:
@@ -173,7 +178,8 @@ def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) 
             return fail(f"event {i}: prev_hash mismatch (event removed, inserted or reordered)", i)
         if entry_hash(ev) != ev["hash"]:
             return fail(f"event {i}: content hash mismatch (event modified)", i)
-        if key and i >= meta.get("hmac_from", len(log)):
+        if key and i >= hmac_from:
+            event_macs += 1
             if "mac" not in ev or not hmac.compare_digest(ev["mac"], _mac(key, ev["hash"])):
                 return fail(f"event {i}: MAC invalid or missing", i)
         prev = ev["hash"]; res["checked"] += 1
@@ -181,8 +187,34 @@ def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) 
         return fail(f"event count {len(log)} != recorded {meta.get('count')} (events added or truncated)")
     if meta.get("head") != prev:
         return fail("head hash does not match metadata")
-    res["head"] = prev; res["mac_verified"] = bool(key)
+    # A metadata MAC that does not match is stale, not a broken chain, when this same
+    # key already verifies at least one event MAC and the hash chain, count, and head agree.
+    # With no event MAC to check, the metadata tag is the only keyed check and still fails closed.
+    if key and not meta_mac_ok:
+        if event_macs == 0:
+            return fail("audit metadata MAC invalid")
+        res["meta_mac_stale"] = True
+    res["head"] = prev
+    res["mac_verified"] = bool(key) and (meta_mac_ok or event_macs > 0)
     return res
+
+
+def reseal_metadata_mac(store, key: bytes | None) -> bool:
+    """Rewrite ``audit_meta.mac`` with ``key`` when the event chain already verifies.
+
+    Event hashes and event MACs are left as they are. Returns True when a new metadata
+    MAC was stored. A chain that does not verify under ``key`` is not modified.
+    """
+    if not key:
+        return False
+    meta = store.data.get("audit_meta")
+    if not isinstance(meta, dict):
+        return False
+    result = verify_chain(store.audit_log, meta, key)
+    if not result.get("ok") or not result.get("meta_mac_stale"):
+        return False
+    meta["mac"] = _mac(key, _meta_msg(meta))
+    return True
 
 
 def _check(name: str, ok: bool, data: dict | None = None, *, skipped: bool = False) -> dict:

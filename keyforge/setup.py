@@ -406,6 +406,11 @@ def _audit_chain(echo, saved: dict) -> None:
             echo("A new audit event was written so the metadata MAC starts at this event.")
             echo("Events before it have no MAC. Rebuilding their hashes is not detected as tampering.")
             echo("")
+        elif audit.reseal_metadata_mac(st, key):
+            st.save()
+            echo("metadata MAC rewritten with the existing HMAC key.")
+            echo("Event hashes were not changed. The new tag covers the current log tip.")
+            echo("")
         r = audit.verify_chain(st.audit_log, st.data.get("audit_meta"), key)
     if r["ok"]:
         line = f"audit chain OK: {r['checked']} chained event(s), count {r['count']}, head {r['head']}"
@@ -473,6 +478,8 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         if i:
             echo("")
         echo(f"  {name}")
+        hint = _PROVIDER_TEXT[name].splitlines()[0]
+        echo(f"    {hint}")
     echo("")
     choice = _ask(read_line, "KEYFORGE_KMS_PROVIDER [local]: ").lower() or "local"
     if choice not in _PROVIDERS:
