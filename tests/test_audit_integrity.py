@@ -233,7 +233,7 @@ class TestAuditFollowups(unittest.TestCase):
         hmac_from = self.st.data["audit_meta"]["hmac_from"]
         broken = last_i - 1  # the event before the tip had its MAC removed
         self.assertIn(
-            f"event {broken + 1}({broken}): MAC missing. hmac_from is {hmac_from + 1}({hmac_from}),",
+            f"event {broken + 1}({broken}): MAC missing.\n\nchain: hmac_from is {hmac_from + 1}({hmac_from}),",
             text,
         )
         for name, value in self.st.audit_log[-1].items():

@@ -90,16 +90,16 @@ def _shown(index: int) -> str:
 
 
 def _event_facts(ev: dict) -> str:
-    """Fields already stored on the event, for a mismatch line."""
-    parts = []
+    """Fields stored on the event, one per line."""
+    lines = []
     for name in ("ts", "action", "key_id", "actor", "os_user"):
         value = ev.get(name)
         if value is None or value == "":
             continue
-        parts.append(f"{name}={value}")
-    if not parts:
+        lines.append(f"  {name}: {value}")
+    if not lines:
         return ""
-    return " Event: " + ", ".join(parts) + "."
+    return "event:\n" + "\n".join(lines)
 
 
 def _event_mac_error(i: int, ev: dict, key: bytes, hmac_from: int) -> str | None:
@@ -110,17 +110,26 @@ def _event_mac_error(i: int, ev: dict, key: bytes, hmac_from: int) -> str | None
     if "mac" not in ev:
         write_time = ev.get("hmac_error")
         if write_time:
-            why = f" At write time: {write_time}"
+            why = f"write: {write_time}"
         else:
-            why = " none recorded"
-        return (
-            f"event {_shown(i)}: MAC missing. hmac_from is {_shown(hmac_from)}, so this event must carry a MAC "
-            "from the loaded HMAC key. The event hash matches: the stored hash equals SHA-256 of "
-            "this event with hash and mac removed, and prev_hash links to the previous event. "
-            "There is no mac field."
-            + why
-            + _event_facts(ev)
-        )
+            why = "write: none recorded"
+        blocks = [
+            f"event {_shown(i)}: MAC missing.",
+            (
+                f"chain: hmac_from is {_shown(hmac_from)}, so this event must carry a MAC "
+                "from the loaded HMAC key."
+            ),
+            (
+                "hash: the stored hash equals SHA-256 of this event with hash and mac removed, "
+                "and prev_hash links to the previous event."
+            ),
+            "mac: there is no mac field.",
+            why,
+        ]
+        facts = _event_facts(ev)
+        if facts:
+            blocks.append(facts)
+        return "\n\n".join(blocks)
     return None
 
 
