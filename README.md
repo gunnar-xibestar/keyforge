@@ -1,4 +1,4 @@
-# KeyForge
+# KeyForge (for educational purposes only) 
 
 Local API key manager. Secrets are encrypted at rest, verification still uses a password hash, and operator login can be delegated to Auth0.
 
