@@ -168,6 +168,13 @@ def _format_verify_report(r: dict) -> str:
         summary = "\n".join(
             f"AUDIT CHAIN BROKEN: {err}" for err in (r.get("errors") or [r["error"]])
         )
+        walked = r.get("walked")
+        last = r.get("walked_last")
+        if isinstance(walked, int) and walked > 0 and isinstance(last, int):
+            summary += (
+                f"\nwalk: checked events 0 through {last} ({walked} events). "
+                "The walk ends at the last event in the log."
+            )
     lines.append(summary)
     for warning in r.get("warnings") or []:
         lines.append(warning)

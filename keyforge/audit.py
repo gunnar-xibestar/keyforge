@@ -84,6 +84,19 @@ def _mac(key: bytes, msg: str) -> str:
     return hmac.new(key, msg.encode(), hashlib.sha256).hexdigest()
 
 
+def _event_facts(ev: dict) -> str:
+    """Fields already stored on the event, for a mismatch line."""
+    parts = []
+    for name in ("ts", "action", "key_id", "actor", "os_user"):
+        value = ev.get(name)
+        if value is None or value == "":
+            continue
+        parts.append(f"{name}={value}")
+    if not parts:
+        return ""
+    return " Event: " + ", ".join(parts) + "."
+
+
 def _event_mac_error(i: int, ev: dict, key: bytes, hmac_from: int) -> str | None:
     """Why this event's MAC failed under ``key``. None when the MAC matches.
 
@@ -101,6 +114,7 @@ def _event_mac_error(i: int, ev: dict, key: bytes, hmac_from: int) -> str | None
             "this event with hash and mac removed, and prev_hash links to the previous event. "
             "There is no mac field."
             + why
+            + _event_facts(ev)
         )
     return None
 
@@ -280,6 +294,8 @@ def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) 
         else:
             res["meta_mac_stale"] = True
     res["head"] = prev
+    res["walked"] = len(log)
+    res["walked_last"] = len(log) - 1 if log else None
     res["mac_verified"] = bool(key) and meta_mac_ok and event_macs > 0 and not errors
     if errors:
         res["ok"] = False
