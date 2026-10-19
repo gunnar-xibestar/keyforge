@@ -223,7 +223,7 @@ def _format_verify_report(r: dict) -> str:
         lines.append("orphan events (key_id not in list)")
         lines.append("---------------------------------")
         lines.append(_table(
-            [{"index": e["index"] + 1, "date": e.get("date") or "", "ts": e.get("ts") or "",
+            [{"index": audit._shown(e["index"]), "date": e.get("date") or "", "ts": e.get("ts") or "",
               "action": e.get("action") or "", "reason": e.get("reason") or "-",
               "key_id": e.get("key_id") or ""} for e in orphans],
             ["index", "date", "ts", "action", "reason", "key_id"],
@@ -234,7 +234,7 @@ def _format_verify_report(r: dict) -> str:
         lines.append("chain events with no key_id")
         lines.append("---------------------------")
         lines.append(_table(
-            [{"index": e["index"] + 1, "date": e.get("date") or "", "ts": e.get("ts") or "",
+            [{"index": audit._shown(e["index"]), "date": e.get("date") or "", "ts": e.get("ts") or "",
               "action": e.get("action") or "", "reason": e.get("reason") or "-"}
              for e in no_key],
             ["index", "date", "ts", "action", "reason"],
