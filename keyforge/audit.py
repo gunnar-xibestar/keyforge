@@ -94,7 +94,7 @@ def _event_mac_error(i: int, ev: dict, key: bytes, hmac_from: int) -> str | None
         if write_time:
             why = f" At write time: {write_time}"
         else:
-            why = " The write did not record why the mac field was omitted."
+            why = " none recorded"
         return (
             f"event {i}: MAC missing. hmac_from is {hmac_from}, so this event must carry a MAC "
             "from the loaded HMAC key. The event hash matches; there is no mac field."
@@ -103,7 +103,7 @@ def _event_mac_error(i: int, ev: dict, key: bytes, hmac_from: int) -> str | None
     return None
 
 
-def _event_mac_warning(i: int, ev: dict, key: bytes, hmac_from: int) -> str | None:
+def _event_mac_warning(i: int, ev: dict, key: bytes, hmac_from: int, matched_through: int) -> str | None:
     """Warning when the computed HMAC and the stored ``mac`` differ.
 
     The hash chain has already matched. This is not a broken chain: the loaded key's
@@ -113,13 +113,15 @@ def _event_mac_warning(i: int, ev: dict, key: bytes, hmac_from: int) -> str | No
         return None
     if hmac.compare_digest(ev["mac"], _mac(key, ev["hash"])):
         return None
-    if i == hmac_from:
+    if matched_through < hmac_from:
         span = f"HMAC INVALID for event {i}. This is the first event that must have a MAC."
-    else:
+    elif matched_through == i - 1:
         span = (
-            f"HMAC VALID for events {hmac_from} through {i - 1}. "
+            f"HMAC VALID for events {hmac_from} through {matched_through}. "
             f"HMAC INVALID for event {i}."
         )
+    else:
+        span = f"HMAC INVALID for event {i}."
     return (
         f"warning: event {i}: the computed HMAC does not match the stored mac. {span} "
         "The loaded HMAC key produces HMAC-SHA256 of this event's hash, and that value "
@@ -228,40 +230,61 @@ def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) 
         hmac_from = len(log)
     prev = GENESIS
     event_macs = 0
+    matched_through = hmac_from - 1
+    errors: list[str] = []
+    first_index = None
+    def note(msg: str, i: int | None = None) -> None:
+        nonlocal first_index
+        errors.append(msg)
+        if i is not None and first_index is None:
+            first_index = i
     for i, ev in enumerate(log):
         if i < legacy:
             if "hash" in ev or "prev_hash" in ev:
-                return fail(f"event {i} is chained but recorded as legacy", i)
-            res["legacy"] += 1; continue
+                note(f"event {i} is chained but recorded as legacy", i)
+            else:
+                res["legacy"] += 1
+            continue
         if "hash" not in ev or "prev_hash" not in ev:
-            return fail(f"event {i} is missing hash/prev_hash (stripped?)", i)
+            note(f"event {i} is missing hash/prev_hash (stripped?)", i)
+            continue
         if ev["prev_hash"] != prev:
-            return fail(f"event {i}: prev_hash mismatch (event removed, inserted or reordered)", i)
+            note(f"event {i}: prev_hash mismatch (event removed, inserted or reordered)", i)
         if entry_hash(ev) != ev["hash"]:
-            return fail(f"event {i}: content hash mismatch (event modified)", i)
+            note(f"event {i}: content hash mismatch (event modified)", i)
         if key and i >= hmac_from:
             mac_error = _event_mac_error(i, ev, key, hmac_from)
             if mac_error:
-                return fail(mac_error, i)
-            mac_warning = _event_mac_warning(i, ev, key, hmac_from)
-            if mac_warning:
-                res["warnings"].append(mac_warning)
+                note(mac_error, i)
             else:
-                event_macs += 1
-        prev = ev["hash"]; res["checked"] += 1
+                mac_warning = _event_mac_warning(i, ev, key, hmac_from, matched_through)
+                if mac_warning:
+                    res["warnings"].append(mac_warning)
+                else:
+                    event_macs += 1
+                    matched_through = i
+        prev = ev["hash"]
+        res["checked"] += 1
     if meta.get("count") != len(log):
-        return fail(f"event count {len(log)} != recorded {meta.get('count')} (events added or truncated)")
+        note(f"event count {len(log)} != recorded {meta.get('count')} (events added or truncated)")
     if meta.get("head") != prev:
-        return fail("head hash does not match metadata")
+        note("head hash does not match metadata")
     # A metadata MAC that does not match is stale, not a broken chain, when this same
     # key already verifies at least one event MAC and the hash chain, count, and head agree.
     # With no event MAC to check, the metadata tag is the only keyed check and still fails closed.
     if key and not meta_mac_ok:
         if event_macs == 0:
-            return fail("audit metadata MAC invalid")
-        res["meta_mac_stale"] = True
+            note("audit metadata MAC invalid")
+        else:
+            res["meta_mac_stale"] = True
     res["head"] = prev
-    res["mac_verified"] = bool(key) and (meta_mac_ok or event_macs > 0)
+    res["mac_verified"] = bool(key) and meta_mac_ok and event_macs > 0 and not errors
+    if errors:
+        res["ok"] = False
+        res["error"] = errors[0]
+        res["errors"] = errors
+        res["index"] = first_index
+        return res
     return res
 
 
@@ -451,7 +474,8 @@ def verify_report(store, key: bytes | None = None) -> dict:
     prev = GENESIS
     hmac_from = meta.get("hmac_from", len(log)) if isinstance(meta.get("hmac_from"), int) else len(log)
     event_mac_ok = True
-    event_mac_err = None
+    event_mac_errs: list[str] = []
+    matched_through = hmac_from - 1
     if legacy_ok:
         for i, ev in enumerate(log):
             if i < legacy:
@@ -480,15 +504,15 @@ def verify_report(store, key: bytes | None = None) -> dict:
                 mac_error = _event_mac_error(i, ev, key, hmac_from)
                 if mac_error:
                     event_mac_ok = False
-                    event_mac_err = mac_error
-                elif _event_mac_warning(i, ev, key, hmac_from):
-                    event_mac_ok = False
-                    event_mac_err = _event_mac_warning(i, ev, key, hmac_from)
-                    chain_ok = False
-                    chain_err = event_mac_err
-                    chain_index = i
-                    break
-            prev = ev["hash"]
+                    event_mac_errs.append(mac_error)
+                else:
+                    mac_warning = _event_mac_warning(i, ev, key, hmac_from, matched_through)
+                    if mac_warning:
+                        event_mac_errs.append(mac_warning)
+                    else:
+                        matched_through = i
+            if "hash" in ev:
+                prev = ev["hash"]
             checked += 1
 
     chain_data = {
@@ -535,7 +559,7 @@ def verify_report(store, key: bytes | None = None) -> dict:
             {
                 "hmac_from": meta.get("hmac_from"),
                 "mac_verified": bool(result["mac_verified"] and event_mac_ok and result["ok"]),
-                **({"error": event_mac_err} if event_mac_err else {}),
+                **({"error": "; ".join(event_mac_errs)} if event_mac_errs else {}),
             },
         ))
 

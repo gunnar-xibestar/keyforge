@@ -421,7 +421,8 @@ def _audit_chain(echo, saved: dict) -> None:
             echo(f"{r['legacy']} legacy event(s) have no hash. Tampering with those events is not detected.")
         echo("")
     else:
-        echo(f"AUDIT CHAIN BROKEN: {r['error']}")
+        for err in r.get("errors") or [r["error"]]:
+            echo(f"AUDIT CHAIN BROKEN: {err}")
         echo("")
     for warning in r.get("warnings") or []:
         echo(warning)
