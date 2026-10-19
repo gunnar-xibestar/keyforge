@@ -344,8 +344,7 @@ def _audit_chain(echo, saved: dict) -> None:
             echo("warning: a new HMAC key was created because none was found at that path.")
             echo("Keep this file. The next setup reuses it instead of creating another.")
             echo("")
-            echo("Without that key, audit --verify only checks the unkeyed hash chain.")
-            echo("Anyone who can write the store can recompute prev_hash and hash, and audit --verify still passes.")
+            echo("If this secret is deleted later, audit --verify fails until it is restored — the chain already has MACs.")
             echo("")
         echo("The MAC detects a rewritten store only when the writer cannot read the HMAC key file.")
         if next_to_store:
@@ -356,9 +355,8 @@ def _audit_chain(echo, saved: dict) -> None:
         if not key:
             echo("No usable HMAC secret was found.")
             echo("")
-        echo("Without HMAC, audit --verify only checks the unkeyed hash chain.")
-        echo("Anyone who can write the store can recompute prev_hash and hash, and audit --verify still passes.")
-        echo("You lose keyed tamper evidence until KEYFORGE_AUDIT_HMAC_KEY_FILE points at a usable secret.")
+        echo("If the audit chain already has MACs, audit --verify fails until KEYFORGE_AUDIT_HMAC_KEY_FILE points at the matching secret.")
+        echo("If the chain never had MACs, verify stays unkeyed until a secret is enabled.")
 
 
 def run(*, read_line, read_secret, echo, login=None) -> dict:
