@@ -415,12 +415,12 @@ def _event_reason(ev: dict) -> str:
         return reason.strip()
     action = ev.get("action") or ""
     if action == "audit_hmac_enabled":
-        return (
-            "setup wrote this event the first time it loaded an HMAC key and audit_meta had no mac. "
-            "hmac_from is this event. Events before it have no MAC and are not checked. "
-            "Every later event must carry a MAC from that same key. "
-            "This row has no key_id because it records the chain, not an API key."
-        )
+        return "\n\n".join([
+            "setup: wrote this event the first time it loaded an HMAC key and audit_meta had no mac.",
+            "hmac_from: this event. Events before it have no MAC and are not checked.",
+            "later: every later event must carry a MAC from that same key.",
+            "key_id: this row has none because it records the chain, not an API key.",
+        ])
     if action == "audit_adopt_legacy":
         n = details.get("legacy")
         return f"legacy chain adopted ({n} unprotected event(s))" if n is not None else "legacy chain adopted"
