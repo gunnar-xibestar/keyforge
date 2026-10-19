@@ -181,7 +181,7 @@ Access-token rejection rules: [Token diet](#token-diet). Every variable: [Enviro
 | command | purpose |
 |---|---|
 | `create --name --owner [--team] [--env live/test] [--scope S]... [--expires-in 30d / --expires-at ISO] [--rate-limit N] [--ip-allow CIDR]... [--label k=v]... [--description] [--dry-run]` | new key; prints the secret once and stores an envelope |
-| `list [--owner --team --env --status --scope GLOB --label k=v] [--format table/json/csv]` | list keys (`kms` wrapping provider; table/csv show `NO EXP` when no expiry) |
+| `list [--owner --team --env --status --scope GLOB --label k=v] [--format table/json/csv]` | list keys, oldest `created_at` first (`kms` wrapping provider; table/csv show `NO EXP` when no expiry; `team` last) |
 | `show KEY` | metadata only (no hash, no envelope, no secret) |
 | `reveal KEY` | decrypt the envelope and print the secret. Requires scope `reveal:secret` when Auth0 is enabled |
 | `verify SECRET/- [--scope S] [--ip IP]` | check a secret against the hash (exit 4 if invalid). Does not decrypt |
