@@ -2,7 +2,7 @@
 
 Material that is useful when operating or extending KeyForge, and that sits outside the main contract in [README.md](README.md).
 
-## Use cases (draft)
+## Use cases
 
 These Auth0 scopes gate the **operator CLI**, not end-user apps and not `kf_...` API-key scopes (`read:packets`, etc.). In Auth0 they are API Permissions on the audience in `AUTH0_AUDIENCE`. In KeyForge they are the space-separated `scope` claim on the access token — whatever Auth0 grants is what the CLI may do.
 
