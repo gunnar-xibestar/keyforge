@@ -238,10 +238,7 @@ def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) 
     if not isinstance(legacy, int) or not 0 <= legacy <= len(log):
         return fail("audit metadata has an invalid legacy count")
     if _chain_expects_hmac(meta) and not key:
-        return fail(
-            "HMAC key required: audit chain has MACs but KEYFORGE_AUDIT_HMAC_KEY_FILE "
-            "is unset or the key was not supplied"
-        )
+        return fail(_hmac_key_missing_message())
     meta_mac_ok = True
     if key:
         expected = _mac(key, _meta_msg(meta))
@@ -383,6 +380,23 @@ def _event_date(ts: str | None) -> str:
     return ts[:10] if len(ts) >= 10 else ts
 
 
+def _hmac_key_missing_message() -> str:
+    """Why verify cannot check MACs: the variable is empty in this process."""
+    raw = os.environ.get("KEYFORGE_AUDIT_HMAC_KEY_FILE")
+    if raw is not None and str(raw).strip():
+        return (
+            "HMAC key required: KEYFORGE_AUDIT_HMAC_KEY_FILE is set in this process, "
+            "but no key bytes were passed to verify."
+        )
+    return (
+        "HMAC key required: the audit chain has MACs, but KEYFORGE_AUDIT_HMAC_KEY_FILE "
+        "is unset in this process. keyforge.env was loaded and did not assign it, and "
+        "the shell did not export it. Verify does not open the default "
+        "~/.keyforge/audit-hmac.key unless that variable names the file. "
+        "The store still has mac and hmac_from from an earlier process that had the key."
+    )
+
+
 def _event_reason(ev: dict) -> str:
     """Human reason for an audit action result, from ``details`` or the action name."""
     details = ev.get("details") if isinstance(ev.get("details"), dict) else {}
@@ -391,7 +405,12 @@ def _event_reason(ev: dict) -> str:
         return reason.strip()
     action = ev.get("action") or ""
     if action == "audit_hmac_enabled":
-        return "audit HMAC enabled; MAC starts at this event"
+        return (
+            "setup wrote this event the first time it loaded an HMAC key and audit_meta had no mac. "
+            "hmac_from is this event. Events before it have no MAC and are not checked. "
+            "Every later event must carry a MAC from that same key. "
+            "This row has no key_id because it records the chain, not an API key."
+        )
     if action == "audit_adopt_legacy":
         n = details.get("legacy")
         return f"legacy chain adopted ({n} unprotected event(s))" if n is not None else "legacy chain adopted"
@@ -510,7 +529,7 @@ def verify_report(store, key: bytes | None = None) -> dict:
         checks.append(_check(
             "audit_meta MAC", False,
             {
-                "reason": "HMAC key required: chain has MACs but KEYFORGE_AUDIT_HMAC_KEY_FILE is unset",
+                "reason": _hmac_key_missing_message(),
                 "mac_present": "mac" in meta,
                 "hmac_from": meta.get("hmac_from"),
             },
@@ -605,7 +624,7 @@ def verify_report(store, key: bytes | None = None) -> dict:
         checks.append(_check(
             "event MACs from hmac_from", False,
             {
-                "reason": "HMAC key required: chain has MACs but KEYFORGE_AUDIT_HMAC_KEY_FILE is unset",
+                "reason": _hmac_key_missing_message(),
                 "hmac_from": meta.get("hmac_from"),
             },
         ))

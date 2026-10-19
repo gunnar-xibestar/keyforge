@@ -393,7 +393,7 @@ Each successful mutating command appends one (or more) events to the store's `au
 | `export` | `export` to a file (stdout `-` does not audit) |
 | `policy_set` / `policy_reset` | `policy set` / `policy reset` |
 | `audit_adopt_legacy` | `audit --adopt-legacy`, or setup when metadata is missing |
-| `audit_hmac_enabled` | setup, the first time it enables a metadata MAC |
+| `audit_hmac_enabled` | setup, the first time it loads an HMAC key while `audit_meta` has no `mac`. That event is `hmac_from`. Events before it have no MAC. Later events must have a MAC from that key. The row has no `key_id` because it records the chain, not an API key. |
 
 `list`, `show`, `policy show`, dry-runs, and a plain `audit` query do not append.
 
@@ -444,7 +444,7 @@ What fails: a missing `hash` or `prev_hash` on a chained event; a `prev_hash` th
 | `count` does not match the log length | `event count A != recorded B (events added or truncated)` |
 | `head` does not match the last chained hash | `head hash does not match metadata` |
 | Metadata MAC wrong, and no event MAC was checked | `audit metadata MAC invalid` |
-| MACs are present and the HMAC key was not supplied | `HMAC key required: audit chain has MACs but KEYFORGE_AUDIT_HMAC_KEY_FILE is unset or the key was not supplied` |
+| MACs are present and the HMAC key was not supplied | `HMAC key required: the audit chain has MACs, but KEYFORGE_AUDIT_HMAC_KEY_FILE is unset in this process.` The line also says `keyforge.env` was loaded and did not assign it, and verify does not open `~/.keyforge/audit-hmac.key` unless the variable names that file. |
 
 A stale metadata MAC does not get its own summary line. The summary stays `audit chain OK: …, MAC verified`.
 

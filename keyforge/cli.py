@@ -154,6 +154,15 @@ def cmd_update(a, st):
     if not a.dry_run: st.save()
     _out(a, {"dry_run": a.dry_run, "key": k.public()}, ("[dry-run] would update:\n" if a.dry_run else "Updated:\n") + _key_text(k))
 
+def _action_cell(event: dict) -> str:
+    """Action name, with the failure reason beside ``verify_fail``."""
+    action = event.get("action") or ""
+    reason = event.get("reason") or ""
+    if action == "verify_fail" and reason not in ("", "-"):
+        return f"verify_fail ({reason})"
+    return action
+
+
 def _format_verify_report(r: dict) -> str:
     """Human text for audit --verify: summary, each check + data, keys↔events match."""
     lines = []
@@ -224,7 +233,7 @@ def _format_verify_report(r: dict) -> str:
         lines.append("---------------------------------")
         lines.append(_table(
             [{"index": audit._shown(e["index"]), "date": e.get("date") or "", "ts": e.get("ts") or "",
-              "action": e.get("action") or "", "reason": e.get("reason") or "-",
+              "action": _action_cell(e), "reason": e.get("reason") or "-",
               "key_id": e.get("key_id") or ""} for e in orphans],
             ["index", "date", "ts", "action", "reason", "key_id"],
         ))
@@ -235,7 +244,7 @@ def _format_verify_report(r: dict) -> str:
         lines.append("---------------------------")
         lines.append(_table(
             [{"index": audit._shown(e["index"]), "date": e.get("date") or "", "ts": e.get("ts") or "",
-              "action": e.get("action") or "", "reason": e.get("reason") or "-"}
+              "action": _action_cell(e), "reason": e.get("reason") or "-"}
              for e in no_key],
             ["index", "date", "ts", "action", "reason"],
         ))
