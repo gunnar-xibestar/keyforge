@@ -85,8 +85,8 @@ def _mac(key: bytes, msg: str) -> str:
 
 
 def _shown(index: int) -> str:
-    """1-based event number plus the stored 0-based index. List indexes stay 0-based."""
-    return f"{index + 1} (index {index})"
+    """Human event number with the stored index beside it: ``1(0)``. List indexes stay 0-based."""
+    return f"{index + 1}({index})"
 
 
 def _event_facts(ev: dict) -> str:
