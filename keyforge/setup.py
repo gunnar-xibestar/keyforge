@@ -458,11 +458,17 @@ def _audit_chain(echo, saved: dict) -> None:
     else:
         echo("warning: HMAC is not verifying the audit chain.")
         echo("")
-        if not key:
-            echo("No usable HMAC secret was found.")
-            echo("")
-        echo("If the audit chain already has MACs, audit --verify fails until KEYFORGE_AUDIT_HMAC_KEY_FILE points at the matching secret.")
-        echo("If the chain never had MACs, verify stays unkeyed until a secret is enabled.")
+        if key and not r["ok"]:
+            echo("The HMAC key file was loaded. Verification stopped because the chain did not match that key.")
+            echo(f"The failure is: {r['error']}")
+            echo("audit --verify fails for the same reason.")
+            echo("This is not a missing key file, and it is not an unkeyed chain.")
+        else:
+            if not key:
+                echo("No usable HMAC secret was found.")
+                echo("")
+            echo("If the audit chain already has MACs, audit --verify fails until KEYFORGE_AUDIT_HMAC_KEY_FILE points at the matching secret.")
+            echo("If the chain never had MACs, verify stays unkeyed until a secret is enabled.")
 
 
 def run(*, read_line, read_secret, echo, login=None) -> dict:
@@ -660,8 +666,13 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     _audit_chain(echo, saved)
     path = _write_env(saved)
     echo("")
+    grant = auth.scope_grant(principal)
     echo("result: success")
-    echo(f"  logged in as {principal.sub}")
+    echo(f"logged in as {principal.sub}")
+    echo("scopes: " + (" ".join(grant["scopes"]) or "-"))
+    if grant["missing_scopes"]:
+        echo("missing_scopes: " + " ".join(grant["missing_scopes"]))
+    echo(f"expires_at: {principal.exp}")
     echo(f"saved: {path}")
     _marks(echo, 5)
     return {"kms_provider": choice, "auth": {"logged_in": True, "sub": principal.sub}, "env_file": str(path), "sub": principal.sub}

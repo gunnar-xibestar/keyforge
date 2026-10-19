@@ -76,6 +76,36 @@ def entry_hash(ev: dict) -> str:
 def _mac(key: bytes, msg: str) -> str:
     return hmac.new(key, msg.encode(), hashlib.sha256).hexdigest()
 
+
+def _event_mac_error(i: int, ev: dict, key: bytes, hmac_from: int) -> str | None:
+    """Why this event's MAC failed under ``key``. None when the MAC matches.
+
+    The hash chain has already matched through this event.
+    """
+    if "mac" not in ev:
+        return (
+            f"event {i}: MAC missing. hmac_from is {hmac_from}, so this event must carry a MAC "
+            "from the loaded HMAC key. The event hash matches; there is no mac field."
+        )
+    if not hmac.compare_digest(ev["mac"], _mac(key, ev["hash"])):
+        if i == hmac_from:
+            verdict = (
+                f"HMAC INVALID for event {i}. This is the first event that must have a MAC, "
+                "and this key does not match it."
+            )
+        else:
+            verdict = (
+                f"HMAC VALID for events {hmac_from} through {i - 1}. "
+                f"HMAC INVALID for event {i}. The same key matches those earlier events."
+            )
+        return (
+            f"event {i}: MAC invalid. {verdict} "
+            "The stored mac is not HMAC-SHA256 of this event's hash under the HMAC key that was loaded. "
+            "The hash chain matches through this event. This key did not sign the event, "
+            "or the event changed after the MAC was written."
+        )
+    return None
+
 def _meta_msg(m: dict) -> str:
     return f"{m.get('legacy')}|{m.get('count')}|{m.get('head')}|{m.get('hmac_from')}"
 
@@ -180,8 +210,9 @@ def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) 
             return fail(f"event {i}: content hash mismatch (event modified)", i)
         if key and i >= hmac_from:
             event_macs += 1
-            if "mac" not in ev or not hmac.compare_digest(ev["mac"], _mac(key, ev["hash"])):
-                return fail(f"event {i}: MAC invalid or missing", i)
+            mac_error = _event_mac_error(i, ev, key, hmac_from)
+            if mac_error:
+                return fail(mac_error, i)
         prev = ev["hash"]; res["checked"] += 1
     if meta.get("count") != len(log):
         return fail(f"event count {len(log)} != recorded {meta.get('count')} (events added or truncated)")
@@ -411,9 +442,10 @@ def verify_report(store, key: bytes | None = None) -> dict:
                 chain_index = i
                 break
             if key and i >= hmac_from:
-                if "mac" not in ev or not hmac.compare_digest(ev["mac"], _mac(key, ev["hash"])):
+                mac_error = _event_mac_error(i, ev, key, hmac_from)
+                if mac_error:
                     event_mac_ok = False
-                    event_mac_err = f"event {i}: MAC invalid or missing"
+                    event_mac_err = mac_error
                     chain_ok = False
                     chain_err = event_mac_err
                     chain_index = i
