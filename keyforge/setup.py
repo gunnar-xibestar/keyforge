@@ -473,6 +473,8 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         if i:
             echo("")
         echo(f"  {name}")
+        hint = _PROVIDER_TEXT[name].splitlines()[0]
+        echo(f"    {hint}")
     echo("")
     choice = _ask(read_line, "KEYFORGE_KMS_PROVIDER [local]: ").lower() or "local"
     if choice not in _PROVIDERS:
