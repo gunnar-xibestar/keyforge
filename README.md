@@ -435,6 +435,8 @@ Legacy events (indices below `legacy`) are counted and skipped: they are not has
 
 It then prints each check (`audit_meta`, legacy, MACs, hash continuity, count, head) with **ok** / **FAIL** / **skip** and the data used. A **keys and chain events** section matches `list` keys to audit events by `key_id` (event counts and actions per key), plus orphan events whose `key_id` is no longer in the store and chain events with no `key_id` (each with **date**, **ts**, **action**, and a **reason** from the event details — e.g. `unknown key` on `verify_fail`, or why `audit_hmac_enabled` was written). `--json` includes the same `checks` and `match` objects.
 
+If the chain already has MACs (`audit_meta.mac` or `hmac_from`) but `KEYFORGE_AUDIT_HMAC_KEY_FILE` is unset, verify **fails** — the secret file is required to check those tags. HMAC checks are **skip**ped only when the chain never had MACs (never keyed).
+
 **`keyforge setup`.** After the KMS choice is saved, setup prints an `Audit chain` title, the store path, then runs the same check as `audit --verify`. It does not exit 7 on failure; it prints `AUDIT CHAIN BROKEN: …` and continues. On success it prints the same `audit chain OK` line.
 
 Setup also repairs and hardens when it can:
@@ -446,8 +448,8 @@ Setup also repairs and hardens when it can:
 After the check, setup reports HMAC status (with blank lines between groups):
 
 - If a valid chain and a matching HMAC secret were already in place, it prints `HMAC: on, verified, working` with the secret path and chain details (`chained` count, `count`, `head`). `audit --verify` will check both the hash chain and the HMAC tags.
-- If setup just created the key (or is enabling MAC for the first time), it prints `HMAC: on and verified for new events`, explains that later setups reuse the file, then warns that without that key `audit --verify` only checks the unkeyed hash chain — anyone who can write the store can recompute `prev_hash` and `hash`, and verify still passes.
-- If no usable HMAC secret is found, it warns that HMAC is not verifying the chain and that you lose keyed tamper evidence until `KEYFORGE_AUDIT_HMAC_KEY_FILE` points at a usable secret.
+- If setup just created the key (or is enabling MAC for the first time), it prints `HMAC: on and verified for new events`, explains that later setups reuse the file, then warns that deleting that secret later makes `audit --verify` fail until it is restored (the chain already has MACs).
+- If no usable HMAC secret is found, it warns that HMAC is not verifying the chain: a MAC'd chain fails verify until the matching secret is restored; a never-keyed chain stays unkeyed.
 
 ### Adopting a pre-chain store
 
@@ -459,7 +461,7 @@ If the log already contains hashed events but the metadata is gone, adopt refuse
 
 ### What the chain does and does not catch
 
-Without an HMAC key, the chain is unkeyed. Anyone who can write the store can edit an event and recompute `prev_hash`, `hash`, `count`, and `head`. `audit --verify` then passes. The chain still detects accidental corruption and naive edits; it does not stop a writer who understands the format.
+Until MACs are enabled, the chain is unkeyed: anyone who can write the store can edit an event and recompute `prev_hash`, `hash`, `count`, and `head`, and `audit --verify` still passes. After MACs exist, deleting or unsetting the HMAC key makes verify fail until the secret is restored (or the store is replaced). The MAC still only detects a rewritten store when the writer cannot read the key file.
 
 The HMAC key file must contain at least 16 bytes, mode 0600, and must not be a symlink. With that key, a writer who cannot read the file cannot produce valid event or metadata MACs.
 

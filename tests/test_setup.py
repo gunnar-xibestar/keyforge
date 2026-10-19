@@ -82,7 +82,7 @@ class SetupTests(unittest.TestCase):
         self.assertIn("warning: a new HMAC key was created because none was found at that path.", text)
         self.assertIn("Later setups reuse this file when it still exists", text)
         self.assertIn("Keep this file. The next setup reuses it instead of creating another.", text)
-        self.assertIn("Without that key, audit --verify only checks the unkeyed hash chain.", text)
+        self.assertIn("If this secret is deleted later, audit --verify fails until it is restored", text)
         self.assertIn("KEYFORGE_AUDIT_HMAC_KEY_FILE=", body)
         self.assertTrue(os.path.isfile(os.path.join(self.d.name, "audit-hmac.key")))
         self.assertNotIn("AUTH0_DOMAIN", body)
@@ -126,8 +126,8 @@ class SetupTests(unittest.TestCase):
         text = "\n".join(self.lines)
         self.assertIn("audit HMAC key is unusable:", text)
         self.assertIn("warning: HMAC is not verifying the audit chain.", text)
-        self.assertIn("Without HMAC, audit --verify only checks the unkeyed hash chain.", text)
-        self.assertIn("You lose keyed tamper evidence until KEYFORGE_AUDIT_HMAC_KEY_FILE points at a usable secret.", text)
+        self.assertIn("If the audit chain already has MACs, audit --verify fails until KEYFORGE_AUDIT_HMAC_KEY_FILE points at the matching secret.", text)
+        self.assertIn("If the chain never had MACs, verify stays unkeyed until a secret is enabled.", text)
 
     def test_saved_auth0_skips_the_setup_question(self):
         os.environ["AUTH0_DOMAIN"] = "tenant.example.test"

@@ -87,6 +87,7 @@ class TestAuditIntegrity(unittest.TestCase):
         audit.record(self.st, "audit_hmac_enabled")
         self.st.save()
         r = audit.verify_report(self.st)
+        self.assertTrue(r["ok"], r)
         no_key = r["match"]["no_key_events"]
         self.assertTrue(no_key)
         fail = next(e for e in no_key if e["action"] == "verify_fail")
@@ -101,6 +102,22 @@ class TestAuditIntegrity(unittest.TestCase):
         self.assertIn("DATE", out)
         self.assertIn("unknown key", out)
         self.assertIn("audit HMAC enabled", out)
+
+    def test_macd_chain_fails_verify_without_hmac_key_file(self):
+        kf = os.path.join(self.d.name, "hmac.key")
+        with open(kf, "wb") as f:
+            f.write(b"k" * 32)
+        os.chmod(kf, 0o600)
+        with mock.patch.dict(os.environ, {"KEYFORGE_AUDIT_HMAC_KEY_FILE": kf}):
+            audit.record(self.st, "export")
+            self.st.save()
+        # Env unset: chain still has MACs → verify must fail, not skip
+        os.environ.pop("KEYFORGE_AUDIT_HMAC_KEY_FILE", None)
+        rc, out, _ = run("--store", self.path, "audit", "--verify")
+        self.assertEqual(rc, 7, out)
+        self.assertIn("HMAC key required", out)
+        self.assertIn("[FAIL] audit_meta MAC", out)
+        self.assertIn("[FAIL] event MACs from hmac_from", out)
 
 class TestAuditFollowups(unittest.TestCase):
     def setUp(self):
@@ -160,11 +177,15 @@ class TestAuditFollowups(unittest.TestCase):
             key = audit.hmac_key()
             audit.record(self.st, "export"); audit.record(self.st, "export")
         r = self.ok(key); self.assertTrue(r["ok"], r); self.assertTrue(r["mac_verified"])
+        # Without the key, a MAC'd chain must fail — the secret is required to verify tags.
+        missing = self.ok()
+        self.assertFalse(missing["ok"])
+        self.assertIn("HMAC key required", missing["error"])
         # attacker without the key rewrites an event and recomputes the chain + metadata
         ev = self.st.audit_log[4]; ev["actor"] = "eve"; ev["hash"] = audit.entry_hash(ev)
         self.st.data["audit_meta"]["head"] = ev["hash"]
-        self.assertTrue(self.ok()["ok"])          # unkeyed check is fooled
-        self.assertFalse(self.ok(key)["ok"])      # keyed check is not
+        self.assertFalse(self.ok()["ok"])         # still fails: MACs present, no key
+        self.assertFalse(self.ok(key)["ok"])      # keyed check catches the rewrite
         self.assertFalse(audit.verify_chain([], None, key)["ok"])
 
     def test_cli_tamper_exit_code(self):

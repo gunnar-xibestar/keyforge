@@ -130,9 +130,18 @@ def _record_unchained(store, action, key_id, details) -> dict:
           "(audit --verify will fail until `audit --adopt-legacy`)", file=sys.stderr)
     return ev
 
+def _chain_expects_hmac(meta: dict) -> bool:
+    """True when the store already carries audit MACs that need the HMAC key file."""
+    return "mac" in meta or isinstance(meta.get("hmac_from"), int)
+
+
 def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) -> dict:
     """Check the hash chain against the metadata. Returns
-    {"ok", "checked", "legacy", "count", "head", "mac_verified", "error", "index"}."""
+    {"ok", "checked", "legacy", "count", "head", "mac_verified", "error", "index"}.
+
+    If the chain already has MACs (``audit_meta.mac`` or ``hmac_from``) but no HMAC key is
+    supplied, verification fails — the secret must be present to check those tags.
+    """
     res = {"ok": True, "checked": 0, "legacy": 0, "count": len(log), "head": GENESIS,
            "mac_verified": False, "error": None, "index": None}
     def fail(msg, i=None): return {**res, "ok": False, "error": msg, "index": i}
@@ -144,6 +153,11 @@ def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) 
     legacy = meta.get("legacy")
     if not isinstance(legacy, int) or not 0 <= legacy <= len(log):
         return fail("audit metadata has an invalid legacy count")
+    if _chain_expects_hmac(meta) and not key:
+        return fail(
+            "HMAC key required: audit chain has MACs but KEYFORGE_AUDIT_HMAC_KEY_FILE "
+            "is unset or the key was not supplied"
+        )
     if key:
         if "mac" not in meta or not hmac.compare_digest(meta["mac"], _mac(key, _meta_msg(meta))):
             return fail("audit metadata MAC invalid")
@@ -307,10 +321,20 @@ def verify_report(store, key: bytes | None = None) -> dict:
         {"legacy": legacy, "log_length": len(log)},
     ))
 
-    if key is None:
+    expects_hmac = _chain_expects_hmac(meta)
+    if key is None and expects_hmac:
+        checks.append(_check(
+            "audit_meta MAC", False,
+            {
+                "reason": "HMAC key required: chain has MACs but KEYFORGE_AUDIT_HMAC_KEY_FILE is unset",
+                "mac_present": "mac" in meta,
+                "hmac_from": meta.get("hmac_from"),
+            },
+        ))
+    elif key is None:
         checks.append(_check(
             "audit_meta MAC", True,
-            {"reason": "KEYFORGE_AUDIT_HMAC_KEY_FILE unset; unkeyed verify"},
+            {"reason": "chain has no MACs; KEYFORGE_AUDIT_HMAC_KEY_FILE unset; unkeyed verify"},
             skipped=True,
         ))
     else:
@@ -388,10 +412,18 @@ def verify_report(store, key: bytes | None = None) -> dict:
         {"meta_head": meta.get("head"), "computed_head": computed_head},
     ))
 
-    if key is None:
+    if key is None and expects_hmac:
+        checks.append(_check(
+            "event MACs from hmac_from", False,
+            {
+                "reason": "HMAC key required: chain has MACs but KEYFORGE_AUDIT_HMAC_KEY_FILE is unset",
+                "hmac_from": meta.get("hmac_from"),
+            },
+        ))
+    elif key is None:
         checks.append(_check(
             "event MACs from hmac_from", True,
-            {"reason": "no HMAC key; event macs not checked"},
+            {"reason": "chain has no MACs; no HMAC key; event macs not checked"},
             skipped=True,
         ))
     else:
