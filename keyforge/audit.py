@@ -417,10 +417,8 @@ def _event_reason(ev: dict) -> str:
     if action == "audit_hmac_enabled":
         return "\n\n".join([
             "setup: wrote this event the first time it loaded an HMAC key and audit_meta had no mac.",
-            "hmac_from: this event.",
             "expected: a mac from that HMAC key on this event.",
-            "missing: events before it have no mac field.",
-            "consequence: those earlier events are not checked. If this event has no mac, verification fails here.",
+            "missing: events before it have no mac field. Those earlier events are not checked. If this event has no mac, verification fails here.",
         ])
     if action == "audit_adopt_legacy":
         n = details.get("legacy")
