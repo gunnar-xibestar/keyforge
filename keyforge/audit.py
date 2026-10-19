@@ -90,12 +90,13 @@ def _event_mac_error(i: int, ev: dict, key: bytes, hmac_from: int) -> str | None
     if not hmac.compare_digest(ev["mac"], _mac(key, ev["hash"])):
         if i == hmac_from:
             verdict = (
-                "HMAC INVALID. This is the first event that must have a MAC, and this key does not match it."
+                f"HMAC INVALID for event {i}. This is the first event that must have a MAC, "
+                "and this key does not match it."
             )
         else:
             verdict = (
                 f"HMAC VALID for events {hmac_from} through {i - 1}. "
-                "HMAC INVALID for this event. The same key matches those earlier events."
+                f"HMAC INVALID for event {i}. The same key matches those earlier events."
             )
         return (
             f"event {i}: MAC invalid. {verdict} "
