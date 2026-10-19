@@ -431,7 +431,7 @@ What fails: a missing `hash` or `prev_hash` on a chained event; a `prev_hash` th
 
 ### Error output
 
-`keyforge setup` prints only the summary line. `keyforge audit --verify` prints that same line, then a `checks` list. A failure exits **7**. The summary is `AUDIT CHAIN BROKEN:` plus one message:
+`keyforge setup` prints only the summary line. `keyforge audit --verify` prints that same line, then a `checks` list. A failure exits **7**. The summary is `AUDIT CHAIN BROKEN:` plus one message. In these messages, `N` and `M` are displayed event numbers starting at 1, with the stored 0-based index in parentheses (the first event in the log is `1 (index 0)`). A walk of 23 events is `checked events 1 (index 0) through 23 (index 22)`. `hmac_from` shown to humans is that same form, for example `hmac_from is 22 (index 21)`. The last-event line is `last event 23 (index 22)`. The stored list index and the stored `hmac_from` field stay 0-based.
 
 | Gate | Summary message |
 |---|---|

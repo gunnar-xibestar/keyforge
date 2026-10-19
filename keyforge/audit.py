@@ -84,6 +84,11 @@ def _mac(key: bytes, msg: str) -> str:
     return hmac.new(key, msg.encode(), hashlib.sha256).hexdigest()
 
 
+def _shown(index: int) -> str:
+    """1-based event number plus the stored 0-based index. List indexes stay 0-based."""
+    return f"{index + 1} (index {index})"
+
+
 def _event_facts(ev: dict) -> str:
     """Fields already stored on the event, for a mismatch line."""
     parts = []
@@ -109,7 +114,7 @@ def _event_mac_error(i: int, ev: dict, key: bytes, hmac_from: int) -> str | None
         else:
             why = " none recorded"
         return (
-            f"event {i}: MAC missing. hmac_from is {hmac_from}, so this event must carry a MAC "
+            f"event {_shown(i)}: MAC missing. hmac_from is {_shown(hmac_from)}, so this event must carry a MAC "
             "from the loaded HMAC key. The event hash matches: the stored hash equals SHA-256 of "
             "this event with hash and mac removed, and prev_hash links to the previous event. "
             "There is no mac field."
@@ -130,16 +135,16 @@ def _event_mac_warning(i: int, ev: dict, key: bytes, hmac_from: int, matched_thr
     if hmac.compare_digest(ev["mac"], _mac(key, ev["hash"])):
         return None
     if matched_through < hmac_from:
-        span = f"HMAC INVALID for event {i}. This is the first event that must have a MAC."
+        span = f"HMAC INVALID for event {_shown(i)}. This is the first event that must have a MAC."
     elif matched_through == i - 1:
         span = (
-            f"HMAC VALID for events {hmac_from} through {matched_through}. "
-            f"HMAC INVALID for event {i}."
+            f"HMAC VALID for events {_shown(hmac_from)} through {_shown(matched_through)}. "
+            f"HMAC INVALID for event {_shown(i)}."
         )
     else:
-        span = f"HMAC INVALID for event {i}."
+        span = f"HMAC INVALID for event {_shown(i)}."
     return (
-        f"warning: event {i}: the computed HMAC does not match the stored mac. {span} "
+        f"warning: event {_shown(i)}: the computed HMAC does not match the stored mac. {span} "
         "The loaded HMAC key produces HMAC-SHA256 of this event's hash, and that value "
         "is not the stored mac. The hash chain matches through this event."
     )
@@ -171,7 +176,7 @@ def record(store, action: str, key_id: str | None = None, **details) -> dict:
         stayed = meta.get("hmac_from")
         key_failure = (
             "KEYFORGE_AUDIT_HMAC_KEY_FILE was unset. No HMAC key file was read. "
-            f"hmac_from stayed {stayed}."
+            f"hmac_from stayed {_shown(stayed) if isinstance(stayed, int) else stayed}."
         )
     else:
         try:
@@ -257,17 +262,17 @@ def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) 
     for i, ev in enumerate(log):
         if i < legacy:
             if "hash" in ev or "prev_hash" in ev:
-                note(f"event {i} is chained but recorded as legacy", i)
+                note(f"event {_shown(i)} is chained but recorded as legacy", i)
             else:
                 res["legacy"] += 1
             continue
         if "hash" not in ev or "prev_hash" not in ev:
-            note(f"event {i} is missing hash/prev_hash (stripped?)", i)
+            note(f"event {_shown(i)} is missing hash/prev_hash (stripped?)", i)
             continue
         if ev["prev_hash"] != prev:
-            note(f"event {i}: prev_hash mismatch (event removed, inserted or reordered)", i)
+            note(f"event {_shown(i)}: prev_hash mismatch (event removed, inserted or reordered)", i)
         if entry_hash(ev) != ev["hash"]:
-            note(f"event {i}: content hash mismatch (event modified)", i)
+            note(f"event {_shown(i)}: content hash mismatch (event modified)", i)
         if key and i >= hmac_from:
             mac_error = _event_mac_error(i, ev, key, hmac_from)
             if mac_error:
@@ -324,7 +329,7 @@ def walk_line(result: dict) -> str:
     last = result.get("walked_last")
     if not isinstance(walked, int) or walked <= 0 or not isinstance(last, int):
         return "walk: the log has no events."
-    return f"walk: checked events 0 through {last} ({walked} events). {walk_movement(result)}"
+    return f"walk: checked events {_shown(0)} through {_shown(last)} ({walked} events). {walk_movement(result)}"
 
 
 def last_event_lines(result: dict) -> list[str]:
@@ -333,7 +338,9 @@ def last_event_lines(result: dict) -> list[str]:
     fields = last.get("fields")
     if not isinstance(fields, dict):
         return []
-    lines = [f"last event {last.get('index')}:"]
+    index = last.get("index")
+    label = _shown(index) if isinstance(index, int) else index
+    lines = [f"last event {label}:"]
     for name in sorted(fields):
         value = fields[name]
         if isinstance(value, (dict, list)):
@@ -537,23 +544,23 @@ def verify_report(store, key: bytes | None = None) -> dict:
             if i < legacy:
                 if "hash" in ev or "prev_hash" in ev:
                     chain_ok = False
-                    chain_err = f"event {i} is chained but recorded as legacy"
+                    chain_err = f"event {_shown(i)} is chained but recorded as legacy"
                     chain_index = i
                     break
                 continue
             if "hash" not in ev or "prev_hash" not in ev:
                 chain_ok = False
-                chain_err = f"event {i} is missing hash/prev_hash"
+                chain_err = f"event {_shown(i)} is missing hash/prev_hash"
                 chain_index = i
                 break
             if ev["prev_hash"] != prev:
                 chain_ok = False
-                chain_err = f"event {i}: prev_hash mismatch"
+                chain_err = f"event {_shown(i)}: prev_hash mismatch"
                 chain_index = i
                 break
             if entry_hash(ev) != ev["hash"]:
                 chain_ok = False
-                chain_err = f"event {i}: content hash mismatch"
+                chain_err = f"event {_shown(i)}: content hash mismatch"
                 chain_index = i
                 break
             if key and i >= hmac_from:

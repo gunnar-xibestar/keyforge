@@ -222,7 +222,17 @@ class TestAuditFollowups(unittest.TestCase):
         self.assertIn("The walk continued past the first mismatch and finished at the last event.", text)
         self.assertIn("AUDIT CHAIN BROKEN:", text)
         last_i = len(self.st.audit_log) - 1
-        self.assertIn(f"last event {last_i}:", text)
+        self.assertIn(
+            f"walk: checked events 1 (index 0) through {last_i + 1} (index {last_i})",
+            text,
+        )
+        self.assertIn(f"last event {last_i + 1} (index {last_i}):", text)
+        hmac_from = self.st.data["audit_meta"]["hmac_from"]
+        broken = last_i - 1  # the event before the tip had its MAC removed
+        self.assertIn(
+            f"event {broken + 1} (index {broken}): MAC missing. hmac_from is {hmac_from + 1} (index {hmac_from}),",
+            text,
+        )
         for name, value in self.st.audit_log[-1].items():
             if isinstance(value, dict):
                 shown = json.dumps(value, sort_keys=True, separators=(", ", ": "))
