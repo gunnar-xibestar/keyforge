@@ -395,6 +395,31 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(rc, 6)
         self.assertIn("non-interactive", err)
 
+    def test_hmac_warning_states_whether_the_walk_continued(self):
+        from keyforge import audit, service as svc
+        from keyforge.store import Store
+        st = Store(os.environ["KEYFORGE_STORE"])
+        svc.create(st, name="n", owner="o")
+        kf = os.path.join(self.d.name, "hmac.key")
+        with open(kf, "wb") as f:
+            f.write(b"k" * 32)
+        os.chmod(kf, 0o600)
+        os.environ["KEYFORGE_AUDIT_HMAC_KEY_FILE"] = kf
+        audit.hmac_key()
+        audit.record(st, "export")
+        audit.record(st, "export")
+        st.audit_log[-2].pop("mac")
+        st.save()
+        setup_mod._audit_chain(self._echo, {})
+        text = "\n".join(self.lines)
+        self.assertIn("The walk continued past the first mismatch and finished at the last event.", text)
+        self.assertIn("The HMAC key file was loaded. The walk continued past the first mismatch.", text)
+        self.assertIn("last event", text)
+        self.assertIn("os_uid:", text)
+        self.assertIn("prev_hash:", text)
+        warning = text.split("warning: HMAC is not verifying the audit chain.", 1)[1]
+        self.assertNotIn("AUDIT CHAIN BROKEN:", warning)
+
     def test_env_file_loads_when_unset(self):
         os.environ.pop("KEYFORGE_KMS_PROVIDER", None)
         Path(self.env_file).write_text("export KEYFORGE_KMS_PROVIDER='local'\n")

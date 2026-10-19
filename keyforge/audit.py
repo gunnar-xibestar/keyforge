@@ -296,9 +296,9 @@ def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) 
     res["head"] = prev
     res["walked"] = len(log)
     res["walked_last"] = len(log) - 1 if log else None
-    res["walk_continued"] = bool(errors) and first_index is not None and log and first_index < len(log) - 1
+    res["walk_continued"] = bool(errors) and first_index is not None and bool(log) and first_index < len(log) - 1
     if log:
-        res["last_event"] = {"index": len(log) - 1, "fields": log[-1]}
+        res["last_event"] = {"index": len(log) - 1, "fields": dict(log[-1])}
     res["mac_verified"] = bool(key) and meta_mac_ok and event_macs > 0 and not errors
     if errors:
         res["ok"] = False
@@ -307,6 +307,41 @@ def verify_chain(log: list, meta: dict | None = None, key: bytes | None = None) 
         res["index"] = first_index
         return res
     return res
+
+
+def walk_movement(result: dict) -> str:
+    """Whether the walk stopped at the first mismatch or kept going to the end."""
+    if result.get("walk_continued"):
+        return "The walk continued past the first mismatch and finished at the last event."
+    if result.get("index") is not None and result.get("index") == result.get("walked_last"):
+        return "The first mismatch is the last event. The walk did not continue past it."
+    return "The walk finished at the last event."
+
+
+def walk_line(result: dict) -> str:
+    """How far verify walked, and whether that walk passed the first mismatch."""
+    walked = result.get("walked")
+    last = result.get("walked_last")
+    if not isinstance(walked, int) or walked <= 0 or not isinstance(last, int):
+        return "walk: the log has no events."
+    return f"walk: checked events 0 through {last} ({walked} events). {walk_movement(result)}"
+
+
+def last_event_lines(result: dict) -> list[str]:
+    """Every stored field of the last audit event."""
+    last = result.get("last_event") or {}
+    fields = last.get("fields")
+    if not isinstance(fields, dict):
+        return []
+    lines = [f"last event {last.get('index')}:"]
+    for name in sorted(fields):
+        value = fields[name]
+        if isinstance(value, (dict, list)):
+            shown = json.dumps(value, sort_keys=True, separators=(", ", ": "))
+        else:
+            shown = value
+        lines.append(f"  {name}: {shown}")
+    return lines
 
 
 def reseal_metadata_mac(store, key: bytes | None) -> bool:

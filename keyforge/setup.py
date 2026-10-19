@@ -367,31 +367,12 @@ def _failure_kinds(result: dict) -> list[str]:
 
 def _last_event_lines(result: dict) -> list[str]:
     """Every stored field of the last audit event, for debugging."""
-    last = result.get("last_event") or {}
-    fields = last.get("fields")
-    if not isinstance(fields, dict):
-        return []
-    lines = [f"last event {last.get('index')}:"]
-    for name in sorted(fields):
-        lines.append(f"  {name}: {fields[name]}")
-    return lines
+    return audit.last_event_lines(result)
 
 
 def _walk_line(result: dict) -> str:
-    """Say how far the walk went. The last index is the end of the log."""
-    walked = result.get("walked")
-    last = result.get("walked_last")
-    if not isinstance(walked, int) or walked <= 0 or not isinstance(last, int):
-        return "walk: the log has no events."
-    continued = result.get("walk_continued")
-    if continued:
-        movement = "The walk continued past the first mismatch and finished at the last event."
-    else:
-        movement = "The first mismatch is the last event. Nothing follows it. The walk still finished at the end of the log."
-    return (
-        f"walk: checked events 0 through {last} ({walked} events). "
-        + movement
-    )
+    """Say how far the walk went and whether it passed the first mismatch."""
+    return audit.walk_line(result)
 
 
 def _audit_chain(echo, saved: dict) -> None:
@@ -525,7 +506,10 @@ def _audit_chain(echo, saved: dict) -> None:
         echo("")
         if key and not r["ok"]:
             echo("kind: audit chain mismatch. This block is not the Auth0 login result.")
-            echo("The HMAC key file was loaded. The walk did not stop at the first mismatch.")
+            if r.get("walk_continued"):
+                echo("The HMAC key file was loaded. The walk continued past the first mismatch.")
+            else:
+                echo("The HMAC key file was loaded. The walk did not continue past the first mismatch.")
             echo(_walk_line(r))
             echo("failure kinds: " + ", ".join(_failure_kinds(r)))
             echo("Each mismatch is an AUDIT CHAIN BROKEN line above.")

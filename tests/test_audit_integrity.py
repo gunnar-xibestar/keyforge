@@ -206,6 +206,40 @@ class TestAuditFollowups(unittest.TestCase):
         self.assertTrue(any("computed HMAC does not match the stored mac" in w for w in rewritten["warnings"]))
         self.assertFalse(audit.verify_chain([], None, key)["ok"])
 
+    def test_missing_mac_walk_and_last_event_fields(self):
+        kf = os.path.join(self.d.name, "hmac.key")
+        with open(kf, "wb") as f: f.write(b"k" * 32)
+        os.chmod(kf, 0o600)
+        with mock.patch.dict(os.environ, {"KEYFORGE_AUDIT_HMAC_KEY_FILE": kf}):
+            key = audit.hmac_key()
+            audit.record(self.st, "export")
+            audit.record(self.st, "export")
+        self.st.audit_log[-2].pop("mac")
+        r = self.ok(key)
+        self.assertFalse(r["ok"])
+        self.assertTrue(r["walk_continued"])
+        text = cli._format_verify_report(audit.verify_report(self.st, key))
+        self.assertIn("The walk continued past the first mismatch and finished at the last event.", text)
+        self.assertIn("AUDIT CHAIN BROKEN:", text)
+        last_i = len(self.st.audit_log) - 1
+        self.assertIn(f"last event {last_i}:", text)
+        for name, value in self.st.audit_log[-1].items():
+            if isinstance(value, dict):
+                shown = json.dumps(value, sort_keys=True, separators=(", ", ": "))
+            else:
+                shown = value
+            self.assertIn(f"  {name}: {shown}", text)
+        self.assertIn("  hash:", text)
+        self.assertIn("  prev_hash:", text)
+        self.assertIn("  os_uid:", text)
+        self.assertIn("  details:", text)
+        self.st.audit_log[-2]["mac"] = audit._mac(key, self.st.audit_log[-2]["hash"])
+        self.st.audit_log[-1].pop("mac")
+        tip = self.ok(key)
+        self.assertFalse(tip["walk_continued"])
+        tip_text = cli._format_verify_report(audit.verify_report(self.st, key))
+        self.assertIn("The walk did not continue past it.", tip_text)
+
     def test_cli_tamper_exit_code(self):
         self.st.save()
         with open(self.path) as f: data = json.load(f)
