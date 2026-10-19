@@ -97,8 +97,13 @@ class TestAuditIntegrity(unittest.TestCase):
         hmac_ev = next(e for e in no_key if e["action"] == "audit_hmac_enabled")
         self.assertIn("first time it loaded an HMAC key", hmac_ev["reason"])
         self.assertIn("expected: a mac from that HMAC key", hmac_ev["reason"])
-        self.assertIn("missing: events before it have no mac field", hmac_ev["reason"])
-        self.assertNotIn("key_id:", hmac_ev["reason"])
+        self.assertIn(
+            "missing: events before it have no mac field. Those earlier events are not checked. "
+            "If this event has no mac, verification fails here.",
+            hmac_ev["reason"],
+        )
+        self.assertNotIn("hmac_from:", hmac_ev["reason"])
+        self.assertNotIn("consequence:", hmac_ev["reason"])
         self.assertIn("\n\n", hmac_ev["reason"])
         rc, out, _ = run("--store", self.path, "audit", "--verify")
         self.assertEqual(rc, 0, out)
@@ -106,7 +111,8 @@ class TestAuditIntegrity(unittest.TestCase):
         self.assertIn("DATE", out)
         self.assertIn("verify_fail (unknown key)", out)
         self.assertIn("setup: wrote this event the first time it loaded an HMAC key", out)
-        self.assertIn("consequence: those earlier events are not checked", out)
+        self.assertIn("If this event has no mac, verification fails here.", out)
+        self.assertNotIn("consequence:", out)
         self.assertNotIn("key_id: this row", out)
 
     def test_macd_chain_fails_verify_without_hmac_key_file(self):
