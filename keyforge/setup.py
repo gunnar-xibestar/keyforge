@@ -407,9 +407,11 @@ def _audit_chain(echo, saved: dict) -> None:
         if not key_file:
             key_path_was_unset = True
             key_file = str(path.parent / "audit-hmac.key")
-            saved["KEYFORGE_AUDIT_HMAC_KEY_FILE"] = key_file
-            os.environ["KEYFORGE_AUDIT_HMAC_KEY_FILE"] = key_file
         key_file = os.path.expanduser(key_file)
+        # Always persist the path. _write_env replaces the whole file, so leaving
+        # this out when the variable was already set drops it for the next command.
+        saved["KEYFORGE_AUDIT_HMAC_KEY_FILE"] = key_file
+        os.environ["KEYFORGE_AUDIT_HMAC_KEY_FILE"] = key_file
         if not os.path.lexists(key_file):
             os.makedirs(os.path.dirname(key_file) or ".", mode=0o700, exist_ok=True)
             fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
