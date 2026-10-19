@@ -438,7 +438,8 @@ What fails: a missing `hash` or `prev_hash` on a chained event; a `prev_hash` th
 | Missing `hash` or `prev_hash` | `event N is missing hash/prev_hash (stripped?)` |
 | `prev_hash` does not match the previous event | `event N: prev_hash mismatch (event removed, inserted or reordered)` |
 | Content hash does not match the body | `event N: content hash mismatch (event modified)` |
-| Event MAC missing or wrong | `event N: MAC invalid or missing` |
+| Event MAC missing | `event N: MAC missing. hmac_from is M, so this event must carry a MAC from the loaded HMAC key. The event hash matches; there is no mac field.` |
+| Event MAC wrong | `event N: MAC invalid. The stored mac is not HMAC-SHA256 of this event's hash under the HMAC key that was loaded. The hash chain matches through this event. This key did not sign the event, or the event changed after the MAC was written.` |
 | `count` does not match the log length | `event count A != recorded B (events added or truncated)` |
 | `head` does not match the last chained hash | `head hash does not match metadata` |
 | Metadata MAC wrong, and no event MAC was checked | `audit metadata MAC invalid` |
