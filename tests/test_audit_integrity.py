@@ -78,6 +78,30 @@ class TestAuditIntegrity(unittest.TestCase):
         self.assertIn("match", payload)
         self.assertGreaterEqual(payload["match"]["keys_listed"], 1)
 
+    def test_verify_report_no_key_events_include_date_and_reason(self):
+        # unknown secret → verify_fail with no key_id and reason "unknown key"
+        try:
+            svc.verify(self.st, "kf_test_notarealsecret000000000001")
+        except Exception:
+            pass
+        audit.record(self.st, "audit_hmac_enabled")
+        self.st.save()
+        r = audit.verify_report(self.st)
+        no_key = r["match"]["no_key_events"]
+        self.assertTrue(no_key)
+        fail = next(e for e in no_key if e["action"] == "verify_fail")
+        self.assertEqual(fail["reason"], "unknown key")
+        self.assertRegex(fail["date"], r"^\d{4}-\d{2}-\d{2}$")
+        self.assertTrue(fail["ts"].startswith(fail["date"]))
+        hmac_ev = next(e for e in no_key if e["action"] == "audit_hmac_enabled")
+        self.assertIn("HMAC enabled", hmac_ev["reason"])
+        rc, out, _ = run("--store", self.path, "audit", "--verify")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("REASON", out)
+        self.assertIn("DATE", out)
+        self.assertIn("unknown key", out)
+        self.assertIn("audit HMAC enabled", out)
+
 class TestAuditFollowups(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.TemporaryDirectory(); self.path = os.path.join(self.d.name, "s.json")

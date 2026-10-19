@@ -178,6 +178,50 @@ def _check(name: str, ok: bool, data: dict | None = None, *, skipped: bool = Fal
     return row
 
 
+def _event_date(ts: str | None) -> str:
+    """Calendar date from an ISO timestamp (``YYYY-MM-DD``), or empty."""
+    if not ts or not isinstance(ts, str):
+        return ""
+    return ts[:10] if len(ts) >= 10 else ts
+
+
+def _event_reason(ev: dict) -> str:
+    """Human reason for an audit action result, from ``details`` or the action name."""
+    details = ev.get("details") if isinstance(ev.get("details"), dict) else {}
+    reason = details.get("reason")
+    if isinstance(reason, str) and reason.strip():
+        return reason.strip()
+    action = ev.get("action") or ""
+    if action == "audit_hmac_enabled":
+        return "audit HMAC enabled; MAC starts at this event"
+    if action == "audit_adopt_legacy":
+        n = details.get("legacy")
+        return f"legacy chain adopted ({n} unprotected event(s))" if n is not None else "legacy chain adopted"
+    if action == "export":
+        path = details.get("file")
+        n = details.get("count")
+        parts = []
+        if path is not None:
+            parts.append(f"file={path}")
+        if n is not None:
+            parts.append(f"count={n}")
+        return "export " + " ".join(parts) if parts else "export"
+    if action == "import":
+        parts = [f"{k}={v}" for k, v in sorted(details.items()) if v is not None]
+        return ("import " + " ".join(parts)) if parts else "import"
+    if action == "policy_set":
+        return f"policy {details.get('field')}={details.get('value')!r}"
+    if action == "policy_reset":
+        return "policy reset"
+    if action == "verify_fail":
+        # reason usually set; fall through with prefix hint when missing
+        pre = details.get("prefix")
+        return f"verify failed (prefix {pre})" if pre else "verify failed"
+    if details:
+        return " ".join(f"{k}={v}" for k, v in sorted(details.items()) if v is not None) or "-"
+    return "-"
+
+
 def key_event_match(store) -> dict:
     """Relate store keys (as in ``list``) to audit events that name them."""
     keys = list(store.all())
@@ -188,10 +232,13 @@ def key_event_match(store) -> dict:
     no_key: list[dict] = []
     for i, ev in enumerate(log):
         kid = ev.get("key_id")
+        ts = ev.get("ts")
         summary = {
             "index": i,
-            "ts": ev.get("ts"),
+            "ts": ts,
+            "date": _event_date(ts if isinstance(ts, str) else None),
             "action": ev.get("action"),
+            "reason": _event_reason(ev),
             "key_id": kid,
             "hash": (ev.get("hash") or "")[:12] or None,
         }
