@@ -96,13 +96,15 @@ class TestAuditIntegrity(unittest.TestCase):
         self.assertTrue(fail["ts"].startswith(fail["date"]))
         hmac_ev = next(e for e in no_key if e["action"] == "audit_hmac_enabled")
         self.assertIn("first time it loaded an HMAC key", hmac_ev["reason"])
-        self.assertIn("Events before it have no MAC", hmac_ev["reason"])
+        self.assertIn("hmac_from: this event", hmac_ev["reason"])
+        self.assertIn("\n\n", hmac_ev["reason"])
         rc, out, _ = run("--store", self.path, "audit", "--verify")
         self.assertEqual(rc, 0, out)
         self.assertIn("REASON", out)
         self.assertIn("DATE", out)
         self.assertIn("verify_fail (unknown key)", out)
-        self.assertIn("first time it loaded an HMAC key", out)
+        self.assertIn("setup: wrote this event the first time it loaded an HMAC key", out)
+        self.assertIn("hmac_from: this event", out)
 
     def test_macd_chain_fails_verify_without_hmac_key_file(self):
         kf = os.path.join(self.d.name, "hmac.key")

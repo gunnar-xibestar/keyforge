@@ -415,12 +415,12 @@ def _event_reason(ev: dict) -> str:
         return reason.strip()
     action = ev.get("action") or ""
     if action == "audit_hmac_enabled":
-        return (
-            "setup wrote this event the first time it loaded an HMAC key and audit_meta had no mac. "
-            "hmac_from is this event. Events before it have no MAC and are not checked. "
-            "Every later event must carry a MAC from that same key. "
-            "This row has no key_id because it records the chain, not an API key."
-        )
+        return "\n\n".join([
+            "setup: wrote this event the first time it loaded an HMAC key and audit_meta had no mac.",
+            "hmac_from: this event. Events before it have no MAC and are not checked.",
+            "later: every later event must carry a MAC from that same key.",
+            "key_id: this row has none because it records the chain, not an API key.",
+        ])
     if action == "audit_adopt_legacy":
         n = details.get("legacy")
         return f"legacy chain adopted ({n} unprotected event(s))" if n is not None else "legacy chain adopted"
@@ -548,18 +548,24 @@ def verify_report(store, key: bytes | None = None) -> dict:
     else:
         if "mac" not in meta:
             meta_mac_ok = False
-            meta_mac_reason = (
-                "audit_meta has no mac. The loaded HMAC key was not used to sign "
-                "legacy|count|head|hmac_from."
-            )
+            meta_mac_reason = "\n\n".join([
+                "audit_meta has no mac.",
+                "key: the loaded HMAC key was not used to sign legacy|count|head|hmac_from.",
+            ])
         else:
             meta_mac_ok = hmac.compare_digest(meta["mac"], _mac(key, _meta_msg(meta)))
-            meta_mac_reason = (
-                "The stored audit_meta.mac is not HMAC-SHA256 of legacy|count|head|hmac_from "
-                "under the loaded HMAC key. count and head above are the values in that message. "
-                "A later event can be appended without refreshing this tag, so the event chain "
-                "can still match while this tag does not."
-            )
+            meta_mac_reason = "\n\n".join([
+                "audit_meta.mac does not match.",
+                (
+                    "tag: the stored audit_meta.mac is not HMAC-SHA256 of "
+                    "legacy|count|head|hmac_from under the loaded HMAC key."
+                ),
+                "values: count and head above are the values in that message.",
+                (
+                    "chain: a later event can be appended without refreshing this tag, "
+                    "so the event chain can still match while this tag does not."
+                ),
+            ])
         checks.append(_check(
             "audit_meta MAC", meta_mac_ok,
             None if meta_mac_ok else {"reason": meta_mac_reason},

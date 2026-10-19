@@ -51,6 +51,45 @@ def _table(rows, cols):
     lines += ["  ".join(str(r.get(c) or "").ljust(w[c]) for c in cols) for r in rows]
     return "\n".join(lines)
 
+
+def _wrap_cell(text: str, width: int) -> list[str]:
+    """Wrap one cell. Blank lines in ``text`` stay blank lines."""
+    import textwrap
+    lines: list[str] = []
+    for para in str(text).split("\n"):
+        if not para:
+            lines.append("")
+            continue
+        lines.extend(textwrap.wrap(para, width) or [""])
+    return lines or ["-"]
+
+
+def _table_wrapped(rows, cols, wrap_col: str, width: int = 72):
+    """A table whose ``wrap_col`` continues on the following lines, under that column."""
+    plain = [c for c in cols if c != wrap_col]
+    w = {c: max(len(c), *(len(str(r.get(c) or "")) for r in rows)) if rows else len(c) for c in plain}
+    w[wrap_col] = max(len(wrap_col), width)
+
+    def paint(values: dict) -> str:
+        return "  ".join(str(values.get(c) or "").ljust(w[c]) for c in cols)
+
+    lines = [
+        paint({c: c.upper() for c in cols}),
+        paint({c: "-" * w[c] for c in cols}),
+    ]
+    for row in rows:
+        wrapped = _wrap_cell(row.get(wrap_col) or "-", width)
+        first = {c: row.get(c) or "" for c in plain}
+        first[wrap_col] = wrapped[0]
+        lines.append(paint(first))
+        rest = {c: "" for c in plain}
+        for extra in wrapped[1:]:
+            rest[wrap_col] = extra
+            lines.append(paint(rest))
+        if len(wrapped) > 1:
+            lines.append("")
+    return "\n".join(lines).rstrip()
+
 def _key_text(k):
     p = k.public()
     lines = [f"{f:<15} {p[f]}" for f in ("id", "name", "prefix", "env", "owner", "team", "effective_status",
@@ -244,22 +283,24 @@ def _format_verify_report(r: dict) -> str:
         lines.append("")
         lines.append("orphan events (key_id not in list)")
         lines.append("---------------------------------")
-        lines.append(_table(
+        lines.append(_table_wrapped(
             [{"index": audit._shown(e["index"]), "date": e.get("date") or "", "ts": e.get("ts") or "",
               "action": _action_cell(e), "reason": e.get("reason") or "-",
               "key_id": e.get("key_id") or ""} for e in orphans],
             ["index", "date", "ts", "action", "reason", "key_id"],
+            "reason",
         ))
     no_key = match.get("no_key_events") or []
     if no_key:
         lines.append("")
         lines.append("chain events with no key_id")
         lines.append("---------------------------")
-        lines.append(_table(
+        lines.append(_table_wrapped(
             [{"index": audit._shown(e["index"]), "date": e.get("date") or "", "ts": e.get("ts") or "",
               "action": _action_cell(e), "reason": e.get("reason") or "-"}
              for e in no_key],
             ["index", "date", "ts", "action", "reason"],
+            "reason",
         ))
     return "\n".join(lines)
 
