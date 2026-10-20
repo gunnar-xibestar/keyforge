@@ -1,6 +1,6 @@
 # KeyForge
 
-An educational local API key manager. KeyForge stores salted password hashes for verification and encrypted secret envelopes for reveal. Operator access can optionally use Auth0.
+An educational local API key manager (made entirely by a Grok Bot team!). KeyForge stores salted password hashes for verification and encrypted secret envelopes for reveal. Operator access can optionally use Auth0.
 
 A key has the form `kf_<env>_<32 random chars>`. `create` and `rotate` print the secret once.
 
