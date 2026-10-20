@@ -8,6 +8,9 @@ version = "0.3.0"
 description = "API key manager with envelope encryption, a local or PKCS#11 KMS, and optional Auth0"
 requires-python = ">=3.10"
 readme = "README.md"
+dependencies = [
+    "cryptography",
+]
 
 [project.scripts]
 keyforge = "keyforge.cli:main"
