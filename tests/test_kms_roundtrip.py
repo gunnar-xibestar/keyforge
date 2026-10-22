@@ -1100,6 +1100,63 @@ class PinCacheTests(_EnvCase):
         self.assertEqual(os.environ.get("KEYFORGE_PKCS11_PIN"), WRONG_PIN)
         self.assertNotIn(PIN, os.environ.values())
 
+    def _rejecting_token(self):
+        class Token:
+            def open(self, rw, user_pin):
+                raise PinIncorrect(user_pin)
+
+        return Token()
+
+    def test_wrong_pin_then_ctrl_c_does_not_keep_the_cache(self):
+        from keyforge.kms import _open_token
+
+        os.environ["KEYFORGE_PKCS11_PIN"] = PIN
+        self._configure()
+        answers = iter(["typed-wrong"])
+
+        def read_secret(_prompt):
+            try:
+                return next(answers)
+            except StopIteration:
+                raise KeyboardInterrupt
+
+        with mock.patch("sys.stdin.isatty", return_value=True), \
+             redirect_stderr(io.StringIO()):
+            with self.assertRaises(KeyboardInterrupt):
+                _open_token(self._rejecting_token(), WRONG_PIN, read_secret=read_secret)
+        self.assertIsNone(kms._user_pin)
+        self.assertEqual(os.environ.get("KEYFORGE_PKCS11_PIN"), PIN)
+
+    def test_wrong_pin_without_a_tty_does_not_keep_the_cache(self):
+        from keyforge.kms import _open_token
+
+        os.environ["KEYFORGE_PKCS11_PIN"] = PIN
+        read_user_pin(lambda _prompt: "typed-wrong")
+        self.assertEqual(kms._user_pin, "typed-wrong")
+        with mock.patch("sys.stdin.isatty", return_value=False), \
+             redirect_stderr(io.StringIO()):
+            with self.assertRaises(KeyForgeError) as cm:
+                _open_token(self._rejecting_token(), "typed-wrong", read_secret=lambda _p: "unused")
+        self.assertEqual(str(cm.exception), "no terminal")
+        self.assertIsNone(kms._user_pin)
+        self.assertEqual(os.environ.get("KEYFORGE_PKCS11_PIN"), PIN)
+
+    def test_aborted_wrong_pin_does_not_override_the_env_pin(self):
+        from keyforge.kms import _open_token
+
+        os.environ["KEYFORGE_PKCS11_PIN"] = PIN
+        self._configure()
+        read_user_pin(lambda _prompt: "typed-wrong")
+        with mock.patch("sys.stdin.isatty", return_value=False), \
+             redirect_stderr(io.StringIO()):
+            with self.assertRaises(KeyForgeError):
+                _open_token(self._rejecting_token(), kms._user_pin, read_secret=lambda _p: "unused")
+        with mock.patch("getpass.getpass", side_effect=AssertionError("prompted")):
+            prov = pkcs11_from_env()
+        self.assertEqual(prov.token._pin, PIN)
+        self.assertIsNone(kms._user_pin)
+        self.assertNotIn("typed-wrong", os.environ.values())
+
     def test_prompted_pin_does_not_reach_child_processes(self):
         os.environ["KEYFORGE_PKCS11_PIN"] = "env-pin"
         read_user_pin(lambda _prompt: PIN)

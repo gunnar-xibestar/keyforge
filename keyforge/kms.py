@@ -572,23 +572,37 @@ def _open_token(token, pin: str, read_secret=None, remember=None):
     Any other token error is re-raised with the PIN removed.
     A corrected PIN stays in the process cache. ``remember``, when passed, is
     called with that PIN after the login succeeds so the caller can reuse it.
+    A PIN the token rejects is removed from the cache. The retry prompt is
+    cached only after that login succeeds, so Ctrl-C or a missing TTY cannot
+    leave a wrong PIN ahead of ``KEYFORGE_PKCS11_PIN``.
     """
+    global _user_pin
     current = pin
+    prompted = False
     while True:
         try:
             session = token.open(rw=True, user_pin=current)
         except Exception as e:
             if _pin_mismatch(e):
+                if _user_pin == current:
+                    _user_pin = None
                 if not sys.stdin.isatty():
                     raise KeyForgeError("no terminal") from None
                 print("PIN is wrong. Ctrl-C to exit.", file=sys.stderr)
                 current = read_user_pin(read_secret)
+                # Login has not happened yet. Hold the prompt out of the cache
+                # until this PIN actually opens the token.
+                if _user_pin == current:
+                    _user_pin = None
+                prompted = True
                 continue
             secrets = tuple(secret for secret in (current, pin, _user_pin) if secret)
             if not _mentions_pin(e, *secrets):
                 raise
             failure = _drop_chain(_exception_without_pin(e, *secrets))
         else:
+            if prompted:
+                _user_pin = current
             if remember is not None and current != pin:
                 remember(current)
             return session
@@ -686,6 +700,13 @@ def read_user_pin(read_secret=None) -> str:
         print("input blank", file=sys.stderr)
 
 
+class _NoTerminal(KeyForgeError):
+    """stdin is not a terminal, so the user PIN cannot be prompted."""
+
+    def __init__(self) -> None:
+        super().__init__("no terminal")
+
+
 def _resolve_user_pin(pin: str | None, module: str, token: str, label: str) -> str:
     """Argument, then the process cache, then ``KEYFORGE_PKCS11_PIN``, then a TTY prompt.
 
@@ -701,7 +722,7 @@ def _resolve_user_pin(pin: str | None, module: str, token: str, label: str) -> s
         return env_pin
     if module and token and label:
         if not sys.stdin.isatty():
-            raise KeyForgeError("no terminal")
+            raise _NoTerminal()
         return read_user_pin()
     return ""
 
@@ -791,9 +812,7 @@ def status(store_path: str | None = None, pin: str | None = None) -> dict:
         label = os.environ.get("KEYFORGE_PKCS11_KEY_LABEL", "")
         try:
             resolved = _resolve_user_pin(pin, module, token, label)
-        except KeyForgeError as e:
-            if str(e) != "no terminal":
-                raise
+        except _NoTerminal:
             info["no_terminal"] = True
             return info
         pin_set = bool(resolved)

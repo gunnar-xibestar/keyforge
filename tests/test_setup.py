@@ -366,6 +366,12 @@ class SetupTests(unittest.TestCase):
         self.assertIn("KEYFORGE_PKCS11_PIN=pin-secret", Path(self.env_file).read_text())
 
     def test_setup_after_a_prompt_uses_that_pin_and_does_not_ask_again(self):
+        # Status opens the token. Without the binding it returns before that,
+        # so the recorded constructor PIN never appears.
+        try:
+            import pkcs11  # noqa: F401
+        except ImportError:
+            self.skipTest("python-pkcs11 is not installed")
         # A prior prompt lives only in the process cache. Setup must use the
         # PIN it just collected, not that cache and not a second prompt.
         kms._user_pin = "prompted-pin"
