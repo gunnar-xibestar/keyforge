@@ -1,0 +1,232 @@
+{
+  "ok": true,
+  "checked": 11,
+  "legacy": 0,
+  "count": 11,
+  "head": "d96b15a0a9e22495554c5c014c6d52949d2843a8b1b940ef59627ca9e746657a",
+  "mac_verified": false,
+  "error": null,
+  "index": null,
+  "warnings": [],
+  "walked": 11,
+  "walked_last": 10,
+  "walk_continued": false,
+  "last_event": {
+    "index": 10,
+    "fields": {
+      "action": "policy_set",
+      "actor": "cli-tester",
+      "details": {
+        "field": "max_ttl",
+        "value": "90d"
+      },
+      "hash": "d96b15a0a9e22495554c5c014c6d52949d2843a8b1b940ef59627ca9e746657a",
+      "key_id": null,
+      "os_uid": 1000,
+      "os_user": "cli-tester",
+      "prev_hash": "96ac8ff3a41f49d67d3aa7dbf9f7064420826873c6f71e3e85384bfd5963d93b",
+      "ts": "2026-01-01T00:00:58Z"
+    }
+  },
+  "checks": [
+    {
+      "name": "audit_meta present",
+      "ok": true,
+      "skipped": false,
+      "data": {
+        "legacy": 0,
+        "hmac_from": null,
+        "mac": false
+      }
+    },
+    {
+      "name": "legacy count valid",
+      "ok": true,
+      "skipped": false
+    },
+    {
+      "name": "audit_meta MAC",
+      "ok": true,
+      "skipped": true,
+      "data": {
+        "reason": "chain has no MACs; KEYFORGE_AUDIT_HMAC_KEY_FILE unset; unkeyed verify"
+      }
+    },
+    {
+      "name": "hash chain continuity and content hashes",
+      "ok": true,
+      "skipped": false
+    },
+    {
+      "name": "count matches log length",
+      "ok": true,
+      "skipped": false
+    },
+    {
+      "name": "head matches last chained hash",
+      "ok": true,
+      "skipped": false
+    },
+    {
+      "name": "event MACs from hmac_from",
+      "ok": true,
+      "skipped": true,
+      "data": {
+        "reason": "chain has no MACs; no HMAC key; event macs not checked"
+      }
+    }
+  ],
+  "match": {
+    "keys_listed": 3,
+    "events_total": 11,
+    "events_with_key": 10,
+    "events_without_key": 1,
+    "orphan_events": [],
+    "no_key_events": [
+      {
+        "index": 10,
+        "ts": "2026-01-01T00:00:58Z",
+        "date": "2026-01-01",
+        "action": "policy_set",
+        "reason": "policy max_ttl='90d'",
+        "key_id": null,
+        "hash": "d96b15a0a9e2"
+      }
+    ],
+    "keys": [
+      {
+        "id": "key_000000000001",
+        "name": "zeta",
+        "prefix": "kf_test_cat9ag49",
+        "created_at": "2026-01-01T00:00:02Z",
+        "event_count": 5,
+        "actions": {
+          "create": 1,
+          "reveal": 1,
+          "verify_ok": 1,
+          "rotate": 1,
+          "revoke": 1
+        },
+        "events": [
+          {
+            "index": 0,
+            "ts": "2026-01-01T00:00:03Z",
+            "date": "2026-01-01",
+            "action": "create",
+            "reason": "env=test name=zeta scopes=['read:packets', 'write:battery']",
+            "key_id": "key_000000000001",
+            "hash": "7e44a70f7e5f"
+          },
+          {
+            "index": 2,
+            "ts": "2026-01-01T00:00:20Z",
+            "date": "2026-01-01",
+            "action": "reveal",
+            "reason": "kms=local",
+            "key_id": "key_000000000001",
+            "hash": "e0cbc76ec8aa"
+          },
+          {
+            "index": 3,
+            "ts": "2026-01-01T00:00:24Z",
+            "date": "2026-01-01",
+            "action": "verify_ok",
+            "reason": "ip=10.1.2.3 scope=read:packets",
+            "key_id": "key_000000000001",
+            "hash": "9e1cd818f9da"
+          },
+          {
+            "index": 5,
+            "ts": "2026-01-01T00:00:35Z",
+            "date": "2026-01-01",
+            "action": "rotate",
+            "reason": "grace_until=2026-01-02T00:00:30Z new_key=key_000000000003",
+            "key_id": "key_000000000001",
+            "hash": "5291e8de6bef"
+          },
+          {
+            "index": 9,
+            "ts": "2026-01-01T00:00:56Z",
+            "date": "2026-01-01",
+            "action": "revoke",
+            "reason": "leak",
+            "key_id": "key_000000000001",
+            "hash": "96ac8ff3a41f"
+          }
+        ]
+      },
+      {
+        "id": "key_000000000002",
+        "name": "alpha",
+        "prefix": "kf_live_y3Vl6OG0",
+        "created_at": "2026-01-01T00:00:07Z",
+        "event_count": 1,
+        "actions": {
+          "create": 1
+        },
+        "events": [
+          {
+            "index": 1,
+            "ts": "2026-01-01T00:00:08Z",
+            "date": "2026-01-01",
+            "action": "create",
+            "reason": "env=live name=alpha scopes=['read:status']",
+            "key_id": "key_000000000002",
+            "hash": "8a372b3fb7de"
+          }
+        ]
+      },
+      {
+        "id": "key_000000000003",
+        "name": "zeta",
+        "prefix": "kf_test_K3Za9sRc",
+        "created_at": "2026-01-01T00:00:33Z",
+        "event_count": 4,
+        "actions": {
+          "create": 1,
+          "suspend": 1,
+          "resume": 1,
+          "update": 1
+        },
+        "events": [
+          {
+            "index": 4,
+            "ts": "2026-01-01T00:00:34Z",
+            "date": "2026-01-01",
+            "action": "create",
+            "reason": "env=test name=zeta scopes=['read:packets', 'write:battery']",
+            "key_id": "key_000000000003",
+            "hash": "d43d0debf3ac"
+          },
+          {
+            "index": 6,
+            "ts": "2026-01-01T00:00:45Z",
+            "date": "2026-01-01",
+            "action": "suspend",
+            "reason": "maintenance",
+            "key_id": "key_000000000003",
+            "hash": "3019322308d3"
+          },
+          {
+            "index": 7,
+            "ts": "2026-01-01T00:00:48Z",
+            "date": "2026-01-01",
+            "action": "resume",
+            "reason": "-",
+            "key_id": "key_000000000003",
+            "hash": "587b9e22c60a"
+          },
+          {
+            "index": 8,
+            "ts": "2026-01-01T00:00:51Z",
+            "date": "2026-01-01",
+            "action": "update",
+            "reason": "changes={'description': 'rotated gateway', 'labels': {'cost': 'ops', 'region': 'us', 'tier': 'gold'}, 'rate_limit': 50, 'scopes': ['admin:read', 'read:packets', 'write:battery']}",
+            "key_id": "key_000000000003",
+            "hash": "c56770289ffc"
+          }
+        ]
+      }
+    ]
+  }
+}
