@@ -869,8 +869,7 @@ class AuthTests(unittest.TestCase):
         self.assertEqual(Path(self.token_file).read_text(), previous)
         self.assert_no_temp_tokens()
 
-        # HTTP error path redacts the client secret. A refresh token that sits past the
-        # 300-character cut is only partly removed; the assertion checks the in-window case.
+        # HTTP error path redacts the client secret and the refresh token before the 300-character cap.
         self.opener.queue = [_http_error(401, {
             "error": "invalid_grant",
             "error_description": f"{SECRET} used {refresh}",
@@ -943,6 +942,272 @@ class AuthTests(unittest.TestCase):
         principal = auth.load_principal()
         self.assertEqual(principal.sub, "auth0|alice")
         self.assertFalse(any(url.endswith("/oauth/token") for url, _ in self.opener.calls))
+
+    def test_error_fields_are_scrubbed_before_the_http_cap(self):
+        # Secrets begin where a 300-character cut would land inside them. Replacing
+        # after that cut leaves the prefix; replacing first removes the whole value.
+        refresh = "rt-STRADDLE-value"
+        password = "pw-STRADDLE-value"
+        start = {"device_code": "dev-code", "user_code": "ABCD-EFGH",
+                 "verification_uri": "https://example.test/activate", "expires_in": 30, "interval": 1}
+
+        def place(secret, start_at, tail=""):
+            text = ("n" * start_at) + secret + tail
+            self.assertEqual(text.find(secret), start_at)
+            return text
+
+        def place_after(first, second, second_at, tail=""):
+            text = first + ("n" * (second_at - len(first))) + second + tail
+            self.assertEqual(text.find(second), second_at)
+            self.assertEqual(text.find(first), 0)
+            return text
+
+        def assert_clean(message, *banned, kept=(), dropped=(), redacted=True):
+            for secret in banned:
+                self.assertNotIn(secret, message)
+                self.assertNotIn(secret[:10], message)
+            for text in kept:
+                self.assertIn(text, message)
+            for text in dropped:
+                self.assertNotIn(text, message)
+            if redacted:
+                self.assertIn("[redacted]", message)
+
+        def login_error(body):
+            self.opener.queue = [body]
+            with self.assertRaises(AuthError) as cm:
+                auth.device_login(prompt=lambda _m: None, sleep=lambda _s: None)
+            return str(cm.exception)
+
+        # Device start shows ``error`` only. The description is dropped, not echoed raw.
+        with self.subTest(path="device-start-200"):
+            message = login_error({"error": f"access_denied {SECRET}",
+                                   "error_description": f"{SECRET} DESC-START"})
+            assert_clean(message, SECRET, kept=("access_denied",), dropped=("DESC-START",))
+            self.assertTrue(message.startswith("Auth0 device authorization failed:"))
+            self.assertFalse(os.path.exists(self.token_file))
+        with self.subTest(path="device-start-http"):
+            message = login_error(_http_error(400, {
+                "error": f"invalid_client {SECRET}",
+                "error_description": place(SECRET, 290, "DESC-START-HTTP"),
+            }))
+            assert_clean(message, SECRET, kept=("invalid_client",), dropped=("DESC-START-HTTP",))
+            self.assertFalse(os.path.exists(self.token_file))
+
+        # Device poll shows both fields. A 200 body is not capped; an HTTP body is, after redaction.
+        with self.subTest(path="device-poll-200"):
+            self.opener.queue = [start, {
+                "error": SECRET,
+                "error_description": place(SECRET, 290, "TAIL-KEEP-200"),
+            }]
+            with self.assertRaises(AuthError) as cm:
+                auth.device_login(prompt=lambda _m: None, sleep=lambda _s: None)
+            message = str(cm.exception)
+            assert_clean(message, SECRET, kept=("TAIL-KEEP-200",))
+            self.assertFalse(os.path.exists(self.token_file))
+        with self.subTest(path="device-poll-http"):
+            self.opener.queue = [start, _http_error(400, {
+                "error": f"invalid_request {SECRET}",
+                "error_description": place(SECRET, 290, "TAIL-HTTP-POLL"),
+            })]
+            with self.assertRaises(AuthError) as cm:
+                auth.device_login(prompt=lambda _m: None, sleep=lambda _s: None)
+            message = str(cm.exception)
+            assert_clean(message, SECRET, kept=("invalid_request",), dropped=("TAIL-HTTP-POLL",))
+            self.assertLessEqual(len(message), 400)
+            self.assertFalse(os.path.exists(self.token_file))
+        with self.subTest(path="device-poll-http-error-field"):
+            self.opener.queue = [start, _http_error(403, {
+                "error": SECRET,
+                "error_description": "user said no",
+            })]
+            with self.assertRaises(AuthError) as cm:
+                auth.device_login(prompt=lambda _m: None, sleep=lambda _s: None)
+            assert_clean(str(cm.exception), SECRET, kept=("user said no",))
+
+        now = int(time.time())
+        expired = self.sign(self.payload(scope="keys:read", iat=now - 900, exp=now - 120))
+
+        def write_expired(token_value):
+            self.write_token({"version": 1, "access_token": expired, "refresh_token": token_value,
+                              "expires_at": now - 120, "token_type": "Bearer", "scope": "keys:read",
+                              "sub": "auth0|alice"})
+            return Path(self.token_file).read_text()
+
+        # Client secret is replaced first (it is longer), which pulls the refresh token left.
+        # It still crosses 300, so a cap before the refresh scrub would leave "rt-STRADD".
+        refresh_http_desc = place_after(SECRET, refresh, 298, "TAIL-HTTP-REFRESH")
+        refresh_200_desc = place_after(SECRET, refresh, 298, "TAIL-KEEP-200")
+        previous = write_expired(refresh)
+        with self.subTest(path="refresh-200"):
+            self.opener.queue = []
+            self.opener.token_body = {"error": f"invalid_grant {SECRET} {refresh}",
+                                      "error_description": refresh_200_desc}
+            with self.assertRaises(AuthError) as cm:
+                auth.load_principal()
+            message = str(cm.exception)
+            assert_clean(message, SECRET, refresh, kept=("invalid_grant", "TAIL-KEEP-200"))
+            self.assertEqual(Path(self.token_file).read_text(), previous)
+            info = auth.status()
+            self.assertNotIn(SECRET, json.dumps(info))
+            self.assertNotIn(refresh, json.dumps(info))
+            self.assertIn("[redacted]", info["reason"])
+            rc, out, err = _run("--json", "auth", "status")
+            self.assertEqual(rc, 0, err)
+            self.assertNotIn(SECRET, out + err)
+            self.assertNotIn(refresh, out + err)
+            self.assertIn("[redacted]", out)
+            self.assertEqual(Path(self.token_file).read_text(), previous)
+        with self.subTest(path="refresh-http"):
+            self.opener.queue = [_http_error(401, {
+                "error": f"invalid_grant {SECRET} {refresh}",
+                "error_description": refresh_http_desc,
+            })]
+            with self.assertRaises(AuthError) as cm:
+                auth.load_principal()
+            message = str(cm.exception)
+            assert_clean(message, SECRET, refresh, kept=("invalid_grant",), dropped=("TAIL-HTTP-REFRESH",))
+            self.assertLessEqual(len(message), 400)
+            self.assertEqual(Path(self.token_file).read_text(), previous)
+        with self.subTest(path="refresh-nested"):
+            nested = f"rt-{SECRET}-tail"
+            previous = write_expired(nested)
+            self.opener.queue = []
+            self.opener.token_body = {"error": "invalid_grant", "error_description": f"reuse {nested}"}
+            with self.assertRaises(AuthError) as cm:
+                auth.load_principal()
+            message = str(cm.exception)
+            # Replacing the client secret first would leave the refresh token's ends in place.
+            self.assertNotIn(nested, message)
+            self.assertNotIn(SECRET, message)
+            self.assertNotIn("rt-", message)
+            self.assertNotIn("-tail", message)
+            self.assertIn("[redacted]", message)
+            self.assertEqual(Path(self.token_file).read_text(), previous)
+        with self.subTest(path="refresh-no-client-secret"):
+            previous = write_expired(refresh)
+            os.environ.pop("AUTH0_CLIENT_SECRET")
+            self.opener.queue = []
+            self.opener.token_body = {"error": f"invalid_grant {refresh}",
+                                      "error_description": f"reuse {refresh}"}
+            try:
+                with self.assertRaises(AuthError) as cm:
+                    auth.load_principal()
+            finally:
+                os.environ["AUTH0_CLIENT_SECRET"] = SECRET
+            message = str(cm.exception)
+            assert_clean(message, refresh, kept=("invalid_grant",))
+            self.assertEqual(Path(self.token_file).read_text(), previous)
+
+        if os.path.exists(self.token_file):
+            os.remove(self.token_file)
+        password_http_desc = place_after(SECRET, password, 298, "TAIL-HTTP-PASSWORD")
+        password_200_desc = place_after(SECRET, password, 298, "TAIL-KEEP-200")
+        with self.subTest(path="password-200"):
+            self.opener.queue = []
+            self.opener.token_body = {"error": f"invalid_grant {SECRET} {password}",
+                                      "error_description": password_200_desc}
+            with self.assertRaises(AuthError) as cm:
+                auth.password_login("ada@example.test", password)
+            message = str(cm.exception)
+            assert_clean(message, SECRET, password, kept=("invalid_grant", "TAIL-KEEP-200"))
+            self.assertFalse(os.path.exists(self.token_file))
+        with self.subTest(path="password-http"):
+            self.opener.queue = [_http_error(401, {
+                "error": f"invalid_grant {SECRET} {password}",
+                "error_description": password_http_desc,
+            })]
+            with self.assertRaises(AuthError) as cm:
+                auth.password_login("ada@example.test", password)
+            message = str(cm.exception)
+            assert_clean(message, SECRET, password, kept=("invalid_grant",), dropped=("TAIL-HTTP-PASSWORD",))
+            self.assertLessEqual(len(message), 400)
+            self.assertFalse(os.path.exists(self.token_file))
+        with self.subTest(path="password-nested"):
+            nested = f"pw-{SECRET}-tail"
+            self.opener.queue = []
+            self.opener.token_body = {"error": nested, "error_description": f"bad {nested}"}
+            with self.assertRaises(AuthError) as cm:
+                auth.password_login("ada@example.test", nested)
+            message = str(cm.exception)
+            self.assertNotIn(nested, message)
+            self.assertNotIn(SECRET, message)
+            self.assertNotIn("pw-", message)
+            self.assertNotIn("-tail", message)
+            self.assertIn("[redacted]", message)
+            self.assertFalse(os.path.exists(self.token_file))
+        for label, body in (
+            ("password-denied-200", {"error": "unauthorized_client",
+                                    "error_description": f"{SECRET} {password} DESC-DENIED"}),
+            ("password-denied-http", _http_error(403, {
+                "error": "unauthorized_client",
+                "error_description": place(password, 290, "DESC-DENIED"),
+            })),
+        ):
+            with self.subTest(path=label):
+                if label.endswith("http"):
+                    self.opener.queue = [body]
+                else:
+                    self.opener.queue = []
+                    self.opener.token_body = body
+                with self.assertRaises(AuthError) as cm:
+                    auth.password_login("ada@example.test", password)
+                message = str(cm.exception)
+                assert_clean(message, SECRET, password, kept=("Grant Types → Password",),
+                             dropped=("DESC-DENIED",), redacted=False)
+                self.assertNotIn("invalid_grant", message)
+                self.assertFalse(os.path.exists(self.token_file))
+        with self.subTest(path="password-no-client-secret"):
+            os.environ.pop("AUTH0_CLIENT_SECRET")
+            self.opener.queue = []
+            self.opener.token_body = {"error": f"invalid_grant {password}",
+                                      "error_description": f"nope {password}"}
+            try:
+                with self.assertRaises(AuthError) as cm:
+                    auth.password_login("ada@example.test", password)
+            finally:
+                os.environ["AUTH0_CLIENT_SECRET"] = SECRET
+            assert_clean(str(cm.exception), password, kept=("invalid_grant",))
+        with self.subTest(path="password-timeout"):
+            self.opener.queue = [TimeoutError(f"slow {password} {SECRET}")]
+            with self.assertRaises(AuthError) as cm:
+                auth.password_login("ada@example.test", password)
+            message = str(cm.exception)
+            assert_clean(message, SECRET, password, kept=("TimeoutError",), dropped=("slow",), redacted=False)
+
+        with self.subTest(path="from-file"):
+            captured = os.path.join(self.d.name, "captured.json")
+            Path(captured).write_text(json.dumps({
+                "error": f"invalid_grant {SECRET} {refresh}",
+                "error_description": f"{SECRET} {refresh} {password} DESC-FILE",
+                "refresh_token": refresh,
+                "access_token": "not-stored",
+            }))
+            with self.assertRaises(AuthError) as cm:
+                auth.accept_token_file(captured)
+            message = str(cm.exception)
+            # The description is omitted. The error field still cannot carry either secret.
+            assert_clean(message, SECRET, refresh, password, kept=("invalid_grant",), dropped=("DESC-FILE", "not-stored"))
+            self.assertFalse(os.path.exists(self.token_file))
+
+        with self.subTest(path="jwks-http"):
+            auth.clear_jwks_cache()
+            self.opener.jwks_action = _http_error(500, {
+                "error": f"server_error {SECRET}",
+                "error_description": place(SECRET, 290, "JWKS-BODY"),
+            })
+            with self.assertRaises(AuthError) as cm:
+                auth.validate_access_token(self.sign(self.payload()))
+            message = str(cm.exception)
+            assert_clean(message, SECRET, kept=("no keys",), dropped=("JWKS-BODY", "server_error"), redacted=False)
+        with self.subTest(path="jwks-200"):
+            auth.clear_jwks_cache()
+            self.opener.jwks = {"error": f"server_error {SECRET}",
+                                "error_description": place(SECRET, 290, "JWKS-BODY")}
+            with self.assertRaises(AuthError) as cm:
+                auth.validate_access_token(self.sign(self.payload()))
+            message = str(cm.exception)
+            assert_clean(message, SECRET, kept=("no keys",), dropped=("JWKS-BODY", "server_error"), redacted=False)
 
     def test_token_file_permissions_symlink_and_temp_cleanup(self):
         token = self.sign(self.payload())
