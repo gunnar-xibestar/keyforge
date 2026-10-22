@@ -1,7 +1,6 @@
 import io, json, os, tempfile, unittest
 from contextlib import redirect_stdout, redirect_stderr
 from datetime import timedelta
-from unittest import mock
 os.environ["KEYFORGE_PBKDF2_ITERS"] = "1000"
 from keyforge import cli, service as svc, crypto
 from keyforge.store import Store
@@ -104,12 +103,7 @@ class TestCLI(Base):
 
     def test_list_kms_and_no_exp(self):
         self.create()  # no expires_at
-        # created_at is truncated to a second. A second key in that same second
-        # follows key-id order after the store is rewritten with sort_keys, so
-        # stamp this one a second later and keep oldest-first deterministic.
-        later = now() + timedelta(seconds=1)
-        with mock.patch("keyforge.service.now", return_value=later):
-            self.create("--name", "dated", "--owner", "alice", "--expires-in", "7d", "--team", "blue")
+        self.create("--name", "dated", "--owner", "alice", "--expires-in", "7d", "--team", "blue")
         # JSON: kms provider, expires_at null when unset (not the display string); oldest first
         rc, out, _ = run("list", "--format", "json")
         rows = json.loads(out)
