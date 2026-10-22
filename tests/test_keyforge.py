@@ -1,7 +1,6 @@
 import io, json, os, tempfile, unittest
 from contextlib import redirect_stdout, redirect_stderr
-from datetime import datetime, timedelta, timezone
-from unittest import mock
+from datetime import timedelta
 os.environ["KEYFORGE_PBKDF2_ITERS"] = "1000"
 from keyforge import cli, service as svc, crypto
 from keyforge.store import Store
@@ -103,18 +102,8 @@ class TestCLI(Base):
         rc, out, _ = run("list", "--env", "live", "--status", "active"); self.assertIn("n2", out)
 
     def test_list_kms_and_no_exp(self):
-        # created_at is whole seconds. Two creates in the same second tie, and
-        # the reloaded store then follows key id rather than creation order.
-        clock = {"at": datetime(2026, 1, 1, tzinfo=timezone.utc)}
-
-        def tick():
-            current = clock["at"]
-            clock["at"] = current + timedelta(seconds=1)
-            return current
-
-        with mock.patch("keyforge.service.now", side_effect=tick):
-            self.create()  # no expires_at
-            self.create("--name", "dated", "--owner", "alice", "--expires-in", "7d", "--team", "blue")
+        self.create()  # no expires_at
+        self.create("--name", "dated", "--owner", "alice", "--expires-in", "7d", "--team", "blue")
         # JSON: kms provider, expires_at null when unset (not the display string); oldest first
         rc, out, _ = run("list", "--format", "json")
         rows = json.loads(out)
