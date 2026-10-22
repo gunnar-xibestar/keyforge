@@ -65,7 +65,8 @@ def list_keys(store, owner=None, team=None, env=None, status=None, scope=None, l
             lk, _, lv = label.partition("=")
             if k.labels.get(lk) != lv: continue
         out.append(k)
-    return sorted(out, key=lambda k: k.created_at)
+    # created_at is second resolution; id keeps same-second creates in a stable order.
+    return sorted(out, key=lambda k: (k.created_at, k.id))
 
 def reveal(store, ref) -> str:
     """Return the envelope-encrypted secret. Revoked keys and legacy hash-only records fail closed.
