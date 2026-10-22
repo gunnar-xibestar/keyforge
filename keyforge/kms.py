@@ -328,11 +328,157 @@ class Pkcs11Token:
         return dek
 
 
+_REDACTED = "[redacted]"
+_REDACTED_ALT = "[***]"
+
+
+def _contains_pin(text: str, pin: str) -> bool:
+    if not text or not pin:
+        return False
+    return pin.casefold() in text.casefold()
+
+
+def _barrier_placeholder(pin: str) -> str:
+    """A marker that shares no casefolded character with ``pin``."""
+    folded = pin.casefold()
+
+    def ok(ch: str) -> bool:
+        folded_ch = ch.casefold()
+        return len(folded_ch) == 1 and folded_ch not in folded
+
+    for ch in "*#@!~":
+        if ok(ch):
+            return ch * 3
+    for cp in list(range(0x20, 0x7F)) + list(range(0xA0, 0x250)):
+        ch = chr(cp)
+        if ok(ch):
+            return ch
+    return "\uf8ff"
+
+
+def _placeholder_for(pin: str) -> str:
+    for candidate in (_REDACTED, _REDACTED_ALT):
+        if not _contains_pin(candidate, pin):
+            return candidate
+    return _barrier_placeholder(pin)
+
+
+def _pin_spans(text: str, pin: str) -> list[tuple[int, int]]:
+    """Original-string spans of ``pin``, case-insensitive, including overlaps."""
+    folded_pin = pin.casefold()
+    if not folded_pin or not text:
+        return []
+    folded_chars: list[str] = []
+    origins: list[int] = []
+    for index, ch in enumerate(text):
+        for folded in ch.casefold():
+            folded_chars.append(folded)
+            origins.append(index)
+    folded = "".join(folded_chars)
+    spans: list[tuple[int, int]] = []
+    start = 0
+    limit = len(folded_pin)
+    while start < len(folded):
+        found = folded.find(folded_pin, start)
+        if found < 0:
+            break
+        orig_start = origins[found]
+        orig_end = origins[found + limit - 1] + 1
+        if orig_end > orig_start:
+            spans.append((orig_start, orig_end))
+        start = found + 1
+    merged: list[list[int]] = []
+    for span_start, span_end in spans:
+        if merged and span_start < merged[-1][1]:
+            if span_end > merged[-1][1]:
+                merged[-1][1] = span_end
+        else:
+            merged.append([span_start, span_end])
+    return [(span_start, span_end) for span_start, span_end in merged]
+
+
+def _replace_pin(text: str, pin: str, placeholder: str) -> str:
+    spans = _pin_spans(text, pin)
+    if not spans:
+        return text
+    parts: list[str] = []
+    cursor = 0
+    for start, end in spans:
+        parts.append(text[cursor:start])
+        parts.append(placeholder)
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
+def _redact_pin(text: str, pin: str) -> str:
+    """Remove every case-insensitive occurrence of ``pin``, including overlaps.
+
+    Uses ``[redacted]`` unless that marker contains ``pin``. If a replacement
+    joins with neighboring text and recreates ``pin``, a second pass uses a
+    marker that cannot carry ``pin``.
+    """
+    if not text or not pin:
+        return text
+    redacted = _replace_pin(text, pin, _placeholder_for(pin))
+    if _contains_pin(redacted, pin):
+        redacted = _replace_pin(redacted, pin, _barrier_placeholder(pin))
+    if _contains_pin(redacted, pin):
+        while _contains_pin(redacted, pin):
+            cleared = _replace_pin(redacted, pin, "")
+            if len(cleared) >= len(redacted):
+                break
+            redacted = cleared
+    return redacted
+
+
+def _mentions_pin(exc: BaseException, *pins: str) -> bool:
+    parts = [type(exc).__name__, str(exc)]
+    for arg in getattr(exc, "args", ()):
+        if isinstance(arg, str):
+            parts.append(arg)
+    blob = "\n".join(parts)
+    return any(pin and _contains_pin(blob, pin) for pin in pins)
+
+
+def _exception_without_pin(exc: BaseException, *pins: str) -> BaseException:
+    """A new exception of the same type whose text no longer contains ``pins``."""
+    secrets = sorted((pin for pin in pins if pin), key=len, reverse=True)
+    message = str(exc)
+    name = type(exc).__name__
+    for secret in secrets:
+        message = _redact_pin(message, secret)
+        name = _redact_pin(name, secret)
+    if name != type(exc).__name__:
+        rebuilt: BaseException = RuntimeError(f"{name}: {message}")
+    else:
+        try:
+            rebuilt = type(exc)(message)
+        except Exception:
+            rebuilt = RuntimeError(f"{name}: {message}")
+    visible = str(rebuilt)
+    if any(_contains_pin(visible, secret) for secret in secrets):
+        safe = f"{type(exc).__name__}: {exc}"
+        for secret in secrets:
+            safe = _redact_pin(safe, secret)
+        if any(_contains_pin(safe, secret) for secret in secrets):
+            safe = _barrier_placeholder(secrets[0])
+        return RuntimeError(safe)
+    return rebuilt
+
+
 def _safe_exc(exc: BaseException, pin: str) -> str:
-    detail = f"{type(exc).__name__}: {exc}"
-    if pin and pin in detail:
-        detail = detail.replace(pin, "[redacted]")
-    return detail[:200]
+    """Exception text with ``pin`` removed, then capped at 200 characters.
+
+    The PIN is removed before the cut. The cut is checked again so a sliced
+    marker cannot put the PIN back.
+    """
+    detail = _redact_pin(f"{type(exc).__name__}: {exc}", pin)[:200]
+    if pin and _contains_pin(detail, pin):
+        detail = _redact_pin(detail, pin)[:200]
+    if pin and _contains_pin(detail, pin):
+        return _barrier_placeholder(pin)
+    return detail
 
 
 class Pkcs11Kms:
@@ -372,18 +518,23 @@ def _open_token(token, pin: str, read_secret=None):
     """Log in with ``pin``. A wrong PIN is asked again until it is correct or the operator stops.
 
     A non-interactive stdin fails on the first wrong PIN. Ctrl-C exits the prompt.
+    Any other token error is re-raised with the PIN removed.
     """
     current = pin
     while True:
         try:
             return token.open(rw=True, user_pin=current)
         except Exception as e:
-            if not _pin_mismatch(e):
+            if _pin_mismatch(e):
+                if not sys.stdin.isatty():
+                    raise KeyForgeError("no terminal") from None
+                print("PIN is wrong. Ctrl-C to exit.", file=sys.stderr)
+                current = read_user_pin(read_secret)
+                continue
+            if not _mentions_pin(e, current, pin):
                 raise
-            if not sys.stdin.isatty():
-                raise KeyForgeError("no terminal") from None
-            print("PIN is wrong. Ctrl-C to exit.", file=sys.stderr)
-            current = read_user_pin(read_secret)
+            failure = _exception_without_pin(e, current, pin)
+        raise failure
 
 
 def confirm_user_pin(module: str, token_label: str, pin: str) -> None:
@@ -405,8 +556,16 @@ def confirm_user_pin(module: str, token_label: str, pin: str) -> None:
             raise KeyForgeError("PIN is wrong. Ctrl-C to exit.") from None
         raise KeyForgeError(f"PKCS#11 login failed ({_safe_exc(e, pin)})") from None
     close = getattr(session, "close", None)
-    if close is not None:
+    if close is None:
+        return
+    try:
         close()
+        return
+    except Exception as e:
+        if not _mentions_pin(e, pin):
+            raise
+        failure = KeyForgeError(f"PKCS#11 session close failed ({_safe_exc(e, pin)})")
+    raise failure
 
 
 def list_aes_labels(module: str, token_label: str, pin: str) -> list[str] | None:
