@@ -1,0 +1,9 @@
+{
+  "valid": true,
+  "key_id": "key_000000000001",
+  "status": "active",
+  "scopes": [
+    "read:packets",
+    "write:battery"
+  ]
+}

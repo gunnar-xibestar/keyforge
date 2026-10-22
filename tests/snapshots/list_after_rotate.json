@@ -1,0 +1,96 @@
+[
+  {
+    "id": "key_000000000001",
+    "name": "zeta",
+    "prefix": "kf_test_cat9ag49",
+    "env": "test",
+    "owner": "alice",
+    "team": "red",
+    "scopes": [
+      "read:packets",
+      "write:battery"
+    ],
+    "created_at": "2026-01-01T00:00:02Z",
+    "expires_at": "2026-01-31T00:00:00Z",
+    "description": "edge gateway",
+    "rate_limit": 120,
+    "ip_allow": [
+      "10.0.0.0/8"
+    ],
+    "labels": {
+      "cost": "ops",
+      "region": "us"
+    },
+    "status": "rotated",
+    "revoked_reason": null,
+    "revoked_at": null,
+    "rotated_to": "key_000000000003",
+    "rotated_from": null,
+    "grace_until": "2026-01-02T00:00:30Z",
+    "last_used_at": "2026-01-01T00:00:22Z",
+    "effective_status": "grace",
+    "kms": "local"
+  },
+  {
+    "id": "key_000000000002",
+    "name": "alpha",
+    "prefix": "kf_live_y3Vl6OG0",
+    "env": "live",
+    "owner": "bob",
+    "team": "blue",
+    "scopes": [
+      "read:status"
+    ],
+    "created_at": "2026-01-01T00:00:07Z",
+    "expires_at": "2026-06-01T00:00:00Z",
+    "description": null,
+    "rate_limit": null,
+    "ip_allow": [
+      "192.168.0.0/16"
+    ],
+    "labels": {
+      "cost": "lab"
+    },
+    "status": "active",
+    "revoked_reason": null,
+    "revoked_at": null,
+    "rotated_to": null,
+    "rotated_from": null,
+    "grace_until": null,
+    "last_used_at": null,
+    "effective_status": "active",
+    "kms": "local"
+  },
+  {
+    "id": "key_000000000003",
+    "name": "zeta",
+    "prefix": "kf_test_K3Za9sRc",
+    "env": "test",
+    "owner": "alice",
+    "team": "red",
+    "scopes": [
+      "read:packets",
+      "write:battery"
+    ],
+    "created_at": "2026-01-01T00:00:33Z",
+    "expires_at": "2026-01-31T00:00:29Z",
+    "description": "edge gateway",
+    "rate_limit": 120,
+    "ip_allow": [
+      "10.0.0.0/8"
+    ],
+    "labels": {
+      "cost": "ops",
+      "region": "us"
+    },
+    "status": "active",
+    "revoked_reason": null,
+    "revoked_at": null,
+    "rotated_to": null,
+    "rotated_from": "key_000000000001",
+    "grace_until": null,
+    "last_used_at": null,
+    "effective_status": "active",
+    "kms": "local"
+  }
+]

@@ -1,0 +1,157 @@
+{
+  "format": "keyforge-export",
+  "version": 1,
+  "exported_at": "2026-01-01T00:00:59Z",
+  "policy": {
+    "max_ttl": "90d"
+  },
+  "keys": [
+    {
+      "id": "key_000000000001",
+      "name": "zeta",
+      "prefix": "kf_test_cat9ag49",
+      "env": "test",
+      "owner": "alice",
+      "team": "red",
+      "scopes": [
+        "read:packets",
+        "write:battery"
+      ],
+      "hash": {
+        "algo": "pbkdf2_sha256",
+        "hash": "2cb527af86f393e1fb5a680d56237b1cc34d00fe4dc6e7dd4eb09cea16d8ea5e",
+        "iterations": 1000,
+        "salt": "5a9f8954be03a5ddac270f31b12fa4b8"
+      },
+      "created_at": "2026-01-01T00:00:02Z",
+      "expires_at": "2026-01-31T00:00:00Z",
+      "description": "edge gateway",
+      "rate_limit": 120,
+      "ip_allow": [
+        "10.0.0.0/8"
+      ],
+      "labels": {
+        "cost": "ops",
+        "region": "us"
+      },
+      "status": "revoked",
+      "revoked_reason": "leak",
+      "revoked_at": "2026-01-01T00:00:55Z",
+      "rotated_to": "key_000000000003",
+      "rotated_from": null,
+      "grace_until": "2026-01-02T00:00:30Z",
+      "last_used_at": "2026-01-01T00:00:22Z",
+      "secret_envelope": {
+        "alg": "AES-256-GCM",
+        "ct": "46a54d753b422a3860bdf3dc74b5add09ffbb7337d2cf850d6e55b11a33783b75478b446fb127bee331b163fc4c86dee81af98e65ef51a3b",
+        "nonce": "fc68b9547e9acce0e12af00b",
+        "v": 1,
+        "wrapped_dek": {
+          "alg": "AES-256-GCM",
+          "ct": "e7e2a31444f5c82577f662ddc8ddd558932e24e0fb11bd9f8b1a797702f7013f6a5b95a29418d307a8f2de141bb2ad8e",
+          "kid": "02d449a31fbb267c",
+          "nonce": "af57210833ab22541636b340",
+          "provider": "local"
+        }
+      }
+    },
+    {
+      "id": "key_000000000002",
+      "name": "alpha",
+      "prefix": "kf_live_y3Vl6OG0",
+      "env": "live",
+      "owner": "bob",
+      "team": "blue",
+      "scopes": [
+        "read:status"
+      ],
+      "hash": {
+        "algo": "pbkdf2_sha256",
+        "hash": "4648ae88b4809e6c869efafc575bc928c8a2714fce09240eefc95c9c06d3d583",
+        "iterations": 1000,
+        "salt": "77bc5532781a917c804eeb1be24eec0d"
+      },
+      "created_at": "2026-01-01T00:00:07Z",
+      "expires_at": "2026-06-01T00:00:00Z",
+      "description": null,
+      "rate_limit": null,
+      "ip_allow": [
+        "192.168.0.0/16"
+      ],
+      "labels": {
+        "cost": "lab"
+      },
+      "status": "active",
+      "revoked_reason": null,
+      "revoked_at": null,
+      "rotated_to": null,
+      "rotated_from": null,
+      "grace_until": null,
+      "last_used_at": null,
+      "secret_envelope": {
+        "alg": "AES-256-GCM",
+        "ct": "cc16402e970f53433c4fec7d7c48a2e8b10bd93f374e504d8fe167bad85e9f5febed9c379a2ec911711469f7274d6913274f9a29e00393a8",
+        "nonce": "38bd4905cfccc6566b68c364",
+        "v": 1,
+        "wrapped_dek": {
+          "alg": "AES-256-GCM",
+          "ct": "bd6d026d3230121aecbf1645ba61abe559fcfca3a5de260ae6641c3c611afb85f927fdb3a5967c9f6fc21f3ab1479fd3",
+          "kid": "02d449a31fbb267c",
+          "nonce": "7af942c26c08f868eb61b6d4",
+          "provider": "local"
+        }
+      }
+    },
+    {
+      "id": "key_000000000003",
+      "name": "zeta",
+      "prefix": "kf_test_K3Za9sRc",
+      "env": "test",
+      "owner": "alice",
+      "team": "red",
+      "scopes": [
+        "admin:read",
+        "read:packets",
+        "write:battery"
+      ],
+      "hash": {
+        "algo": "pbkdf2_sha256",
+        "hash": "888c801f52e4ba63f17db8734901de2ed8f4cdb78b0965f1b80b2e8de19386da",
+        "iterations": 1000,
+        "salt": "88445bd24fb8bd9f01d4f4933211ee31"
+      },
+      "created_at": "2026-01-01T00:00:33Z",
+      "expires_at": "2026-01-31T00:00:29Z",
+      "description": "rotated gateway",
+      "rate_limit": 50,
+      "ip_allow": [
+        "10.0.0.0/8"
+      ],
+      "labels": {
+        "cost": "ops",
+        "region": "us",
+        "tier": "gold"
+      },
+      "status": "active",
+      "revoked_reason": null,
+      "revoked_at": null,
+      "rotated_to": null,
+      "rotated_from": "key_000000000001",
+      "grace_until": null,
+      "last_used_at": null,
+      "secret_envelope": {
+        "alg": "AES-256-GCM",
+        "ct": "bc46111db418f4cd9af3fe31c6bd036b0db49e03d5b6ae9c9650be2c1ad4ebf4ed1a1d2d98a7170da8194445ac0f8eddc4ed246f47e003d4",
+        "nonce": "1eb3ae7cc6798ab058e5fcf6",
+        "v": 1,
+        "wrapped_dek": {
+          "alg": "AES-256-GCM",
+          "ct": "85adc6c8a016c609f4a92d4e7694078569340ea76d33332a089a94f014d6b3cf567e055d5a08623a6f81bf524fee00e5",
+          "kid": "02d449a31fbb267c",
+          "nonce": "98ec33d81bff9643c3601b7c",
+          "provider": "local"
+        }
+      }
+    }
+  ]
+}
