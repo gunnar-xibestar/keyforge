@@ -1024,6 +1024,21 @@ class AuthTests(unittest.TestCase):
             with self.assertRaises(AuthError) as cm:
                 auth.device_login(prompt=lambda _m: None, sleep=lambda _s: None)
             assert_clean(str(cm.exception), SECRET, kept=("user said no",))
+        with self.subTest(path="device-poll-scrubs-device-code"):
+            code = "device-CODE-9f3c"
+            self.opener.queue = [
+                {"device_code": code, "user_code": "ABCD-EFGH",
+                 "verification_uri": "https://example.test/activate", "expires_in": 30, "interval": 1},
+                {"error": f"access_denied {code}", "error_description": f"holder {code} said no"},
+            ]
+            with self.assertRaises(AuthError) as cm:
+                auth.device_login(prompt=lambda _m: None, sleep=lambda _s: None)
+            message = str(cm.exception)
+            self.assertNotIn(code, message)
+            self.assertNotIn("device-CO", message)
+            self.assertIn("access_denied", message)
+            self.assertIn("said no", message)
+            self.assertIn("[redacted]", message)
 
         now = int(time.time())
         expired = self.sign(self.payload(scope="keys:read", iat=now - 900, exp=now - 120))
@@ -1208,6 +1223,41 @@ class AuthTests(unittest.TestCase):
                 auth.validate_access_token(self.sign(self.payload()))
             message = str(cm.exception)
             assert_clean(message, SECRET, kept=("no keys",), dropped=("JWKS-BODY", "server_error"), redacted=False)
+
+    def test_request_json_scrubs_http_error_without_a_length_cap(self):
+        # Direct callers never see the client secret. This pass does not cap, so a
+        # value past 300 characters is still removed and the tail is still present.
+        description = ("n" * 290) + SECRET + "TAIL-BEYOND-CAP"
+        self.opener.queue = [_http_error(401, {
+            "error": f"invalid_request {SECRET}",
+            "error_description": description,
+        })]
+        body = auth._request_json("https://tenant.example.test/oauth/token", {"x": "y"})
+        self.assertEqual(body["_http_error"], 401)
+        self.assertNotIn(SECRET, body["error"])
+        self.assertNotIn(SECRET, body["error_description"])
+        self.assertNotIn(SECRET[:10], body["error_description"])
+        self.assertIn("[redacted]", body["error"])
+        self.assertIn("[redacted]", body["error_description"])
+        self.assertIn("invalid_request", body["error"])
+        self.assertIn("TAIL-BEYOND-CAP", body["error_description"])
+        self.assertGreater(len(body["error_description"]), 300)
+
+        refresh = "rt-" + SECRET + "-tail"
+        self.opener.queue = [_http_error(401, {
+            "error": f"invalid_grant {SECRET} {refresh}",
+            "error_description": ("n" * 290) + SECRET + "TAIL-BEYOND-CAP " + refresh,
+        })]
+        body = auth._request_json(
+            "https://tenant.example.test/oauth/token", {"grant_type": "refresh_token"}, secret=refresh)
+        blob = body["error"] + body["error_description"]
+        self.assertNotIn(SECRET, blob)
+        self.assertNotIn(refresh, blob)
+        self.assertNotIn("rt-", blob)
+        self.assertNotIn("-tail", blob)
+        self.assertIn("TAIL-BEYOND-CAP", body["error_description"])
+        self.assertGreater(len(body["error_description"]), 300)
+        self.assertIn("invalid_grant", body["error"])
 
     def test_token_file_permissions_symlink_and_temp_cleanup(self):
         token = self.sign(self.payload())

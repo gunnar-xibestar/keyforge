@@ -159,7 +159,7 @@ def _redact(text: str, *secrets: str, limit: int | None = None) -> str:
 
 
 def _error_parts(body: dict, *secrets: str) -> tuple[str, str]:
-    """Scrub ``error`` and ``error_description``. HTTP descriptions are capped after the scrub."""
+    """Second pass over ``error`` and ``error_description``. HTTP descriptions are capped here."""
     known = (os.environ.get("AUTH0_CLIENT_SECRET") or "", *secrets)
     limit = 300 if body.get("_http_error") else None
     error = _redact(str(body.get("error") or ""), *known)
@@ -167,7 +167,7 @@ def _error_parts(body: dict, *secrets: str) -> tuple[str, str]:
     return error, description
 
 
-def _request_json(url: str, fields: dict | None = None, timeout: float = 30) -> dict:
+def _request_json(url: str, fields: dict | None = None, timeout: float = 30, secret: str = "") -> dict:
     headers = {"Accept": "application/json"}
     data = None
     if fields is not None:
@@ -175,7 +175,7 @@ def _request_json(url: str, fields: dict | None = None, timeout: float = 30) -> 
         headers["Content-Type"] = "application/x-www-form-urlencoded"
     req = urllib.request.Request(url, data=data, headers=headers)
     open_ = _opener or urllib.request.urlopen
-    secret = os.environ.get("AUTH0_CLIENT_SECRET") or ""
+    client_secret = os.environ.get("AUTH0_CLIENT_SECRET") or ""
     try:
         with open_(req, timeout=timeout) as resp:
             raw = resp.read()
@@ -190,11 +190,14 @@ def _request_json(url: str, fields: dict | None = None, timeout: float = 30) -> 
             body = {}
         if not isinstance(body, dict):
             body = {}
-        # Keep the raw fields. Callers redact every secret they hold, then cap HTTP descriptions.
-        return {"_http_error": e.code, "error": str(body.get("error") or f"http {e.code}"),
-                "error_description": str(body.get("error_description") or "")}
+        error = str(body.get("error") or f"http {e.code}")
+        description = str(body.get("error_description") or "")
+        # No length cap. _error_parts repeats the scrub and then caps HTTP descriptions.
+        return {"_http_error": e.code,
+                "error": _redact(error, client_secret, secret),
+                "error_description": _redact(description, client_secret, secret)}
     except Exception as e:
-        raise AuthError("Auth0 request failed: " + _redact(f"{type(e).__name__}", secret, limit=300)) from None
+        raise AuthError("Auth0 request failed: " + _redact(f"{type(e).__name__}", client_secret, limit=300)) from None
     if len(raw) > 65536:
         raise AuthError("Auth0 response is overstuffed")
     try:
@@ -444,7 +447,7 @@ def _refresh(refresh_token: str) -> Principal:
     fields = {"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": conf["client_id"]}
     if conf["secret"]:
         fields["client_secret"] = conf["secret"]
-    body = _request_json(f"https://{conf['domain']}/oauth/token", fields)
+    body = _request_json(f"https://{conf['domain']}/oauth/token", fields, secret=refresh_token)
     if "refresh_token" not in body:
         body = dict(body)
         body["refresh_token"] = refresh_token
@@ -492,7 +495,7 @@ def password_login(username: str, password: str) -> Principal:
     }
     if conf["secret"]:
         fields["client_secret"] = conf["secret"]
-    body = _request_json(f"https://{conf['domain']}/oauth/token", fields)
+    body = _request_json(f"https://{conf['domain']}/oauth/token", fields, secret=password)
     if body.get("error") == "unauthorized_client":
         raise AuthError(
             "Auth0 rejected the password grant for this client. "
@@ -544,7 +547,9 @@ def device_login(*, prompt=None, sleep=time.sleep) -> Principal:
             sleep(interval)
             continue
         if err:
-            error, description = _error_parts(tok)
+            device_code = started.get("device_code")
+            extras = (device_code,) if isinstance(device_code, str) else ()
+            error, description = _error_parts(tok, *extras)
             raise AuthError(f"Auth0 token endpoint: {error}: {description}".rstrip(": "))
         return _accept_token_response(tok)
     raise AuthError("device code expired before authorization")
