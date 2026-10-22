@@ -5,7 +5,7 @@ The envelopes below were produced by the current ``memory_provider`` and
 a later refactor has to decrypt these bytes, not replace them with a fresh wrap.
 PKCS#11 is stubbed in-process so the suite does not need SoftHSM.
 """
-import io, json, logging, os, sys, traceback, unittest
+import io, json, logging, os, subprocess, sys, traceback, unittest
 from contextlib import redirect_stderr
 from unittest import mock
 
@@ -227,7 +227,9 @@ class _EnvCase(unittest.TestCase):
         self._saved_env = {name: os.environ.get(name) for name in _ENV_KEYS}
         for name in _ENV_KEYS:
             os.environ.pop(name, None)
+        kms._user_pin = None
         self.addCleanup(self._restore_env)
+        self.addCleanup(setattr, kms, "_user_pin", None)
 
     def _restore_env(self):
         for name, value in self._saved_env.items():
@@ -537,6 +539,8 @@ class PinRedactionTests(_EnvCase):
 
         def read_secret(prompt):
             prompts.append(prompt)
+            if len(prompts) == 1:
+                self.assertIsNone(kms._user_pin)
             return next(answers)
 
         err = io.StringIO()
@@ -545,7 +549,8 @@ class PinRedactionTests(_EnvCase):
             got = read_user_pin(read_secret)
         self.assertEqual(got, PIN)
         self.assertEqual(prompts, ["KEYFORGE_PKCS11_PIN: ", "KEYFORGE_PKCS11_PIN: "])
-        self.assertEqual(os.environ.get("KEYFORGE_PKCS11_PIN"), PIN)
+        self.assertIsNone(os.environ.get("KEYFORGE_PKCS11_PIN"))
+        self.assertEqual(kms._user_pin, PIN)
         self.assertIn("input blank", err.getvalue())
         self.assertPinHidden(PIN, err.getvalue(), "\n".join(logs), "\n".join(prompts))
 
@@ -877,7 +882,9 @@ class PinRedactionTests(_EnvCase):
              redirect_stderr(err):
             prov = pkcs11_from_env()
         self.assertIn("input blank", err.getvalue())
-        self.assertEqual(os.environ.get("KEYFORGE_PKCS11_PIN"), PIN)
+        self.assertIsNone(os.environ.get("KEYFORGE_PKCS11_PIN"))
+        self.assertEqual(kms._user_pin, PIN)
+        self.assertEqual(prov.token._pin, PIN)
         self.assertPinHidden(PIN, err.getvalue(), "\n".join(logs), repr(prov), repr(prov.token))
 
     def test_status_hides_pin_on_failure_and_success(self):
@@ -968,6 +975,140 @@ class PinRedactionTests(_EnvCase):
         joined = err.getvalue() + "\n" + "\n".join(logs)
         self.assertPinHidden(PIN, joined)
         self.assertPinHidden(WRONG_PIN, joined)
+
+
+class PinCacheTests(_EnvCase):
+    def _configure(self):
+        os.environ["KEYFORGE_KMS_PROVIDER"] = "pkcs11"
+        os.environ["KEYFORGE_PKCS11_MODULE"] = __file__
+        os.environ["KEYFORGE_PKCS11_TOKEN"] = "keyforge"
+        os.environ["KEYFORGE_PKCS11_KEY_LABEL"] = "keyforge-kek"
+
+    def _child_env_pin(self):
+        script = (
+            "import os\n"
+            "value = os.environ.get('KEYFORGE_PKCS11_PIN')\n"
+            "print('' if value is None else value)\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, check=True,
+        )
+        self.assertNotIn(PIN, proc.stderr)
+        return proc.stdout.strip()
+
+    def test_prompt_never_sets_environ(self):
+        os.environ["KEYFORGE_PKCS11_PIN"] = "env-pin"
+        got = read_user_pin(lambda _prompt: PIN)
+        self.assertEqual(got, PIN)
+        self.assertEqual(kms._user_pin, PIN)
+        self.assertEqual(os.environ.get("KEYFORGE_PKCS11_PIN"), "env-pin")
+        self.assertNotIn(PIN, os.environ.values())
+
+        os.environ.pop("KEYFORGE_PKCS11_PIN", None)
+        read_user_pin(lambda _prompt: PIN)
+        self.assertIsNone(os.environ.get("KEYFORGE_PKCS11_PIN"))
+        self.assertEqual(kms._user_pin, PIN)
+
+    def test_resolution_uses_argument_then_cache_then_env(self):
+        self._configure()
+        kms._user_pin = "cached-pin"
+        os.environ["KEYFORGE_PKCS11_PIN"] = "env-pin"
+        with mock.patch("getpass.getpass", side_effect=AssertionError("prompted")):
+            explicit = pkcs11_from_env("explicit-pin")
+        self.assertEqual(explicit.token._pin, "explicit-pin")
+        self.assertEqual(kms._user_pin, "cached-pin")
+        self.assertEqual(os.environ.get("KEYFORGE_PKCS11_PIN"), "env-pin")
+
+        with mock.patch("getpass.getpass", side_effect=AssertionError("prompted")):
+            cached = pkcs11_from_env()
+        self.assertEqual(cached.token._pin, "cached-pin")
+
+        kms._user_pin = None
+        with mock.patch("getpass.getpass", side_effect=AssertionError("prompted")):
+            from_env = pkcs11_from_env()
+        self.assertEqual(from_env.token._pin, "env-pin")
+        self.assertIsNone(kms._user_pin)
+
+    def test_status_prompts_only_once(self):
+        self._configure()
+        calls = []
+
+        def fake(prompt):
+            calls.append(prompt)
+            return PIN
+
+        with mock.patch("sys.stdin.isatty", return_value=True), \
+             mock.patch("getpass.getpass", side_effect=fake), \
+             redirect_stderr(io.StringIO()):
+            first = kms.status()
+            pkcs11_from_env()
+            second = kms.status()
+        self.assertEqual(calls, ["KEYFORGE_PKCS11_PIN: "])
+        self.assertTrue(first["pin_set"])
+        self.assertTrue(second["pin_set"])
+        self.assertIsNone(os.environ.get("KEYFORGE_PKCS11_PIN"))
+        self.assertEqual(kms._user_pin, PIN)
+        rendered = str(first) + str(second) + "\n".join(kms.format_status(first))
+        self.assertNotIn(PIN, rendered)
+
+        with mock.patch("sys.stdin.isatty", return_value=False), \
+             mock.patch("getpass.getpass", side_effect=AssertionError("prompted")):
+            later = kms.status()
+        self.assertTrue(later["pin_set"])
+        self.assertNotEqual(kms.format_status(later), ["no terminal"])
+        self.assertNotIn(PIN, str(later))
+
+    def test_wrong_pin_retry_updates_cache_and_token_pin(self):
+        stub = _Token()
+        stub.accept_pin = PIN
+        _install_pkcs11(self, stub)
+        tok = Pkcs11Token(__file__, "keyforge", WRONG_PIN, "keyforge-kek")
+        calls = []
+
+        def fake(prompt):
+            calls.append(prompt)
+            return PIN
+
+        err = io.StringIO()
+        with mock.patch("sys.stdin.isatty", return_value=True), \
+             mock.patch("getpass.getpass", side_effect=fake), \
+             redirect_stderr(err):
+            session = tok._session()
+        self.assertIsNotNone(session)
+        self.assertEqual(calls, ["KEYFORGE_PKCS11_PIN: "])
+        self.assertEqual(tok._pin, PIN)
+        self.assertEqual(kms._user_pin, PIN)
+        self.assertIsNone(os.environ.get("KEYFORGE_PKCS11_PIN"))
+        self.assertNotIn(PIN, err.getvalue())
+        self.assertNotIn(WRONG_PIN, err.getvalue())
+
+        calls.clear()
+        with mock.patch("sys.stdin.isatty", return_value=True), \
+             mock.patch("getpass.getpass", side_effect=fake), \
+             redirect_stderr(io.StringIO()):
+            again = tok._session()
+        self.assertIsNotNone(again)
+        self.assertEqual(calls, [])
+        self.assertEqual(stub.pins, [WRONG_PIN, PIN, PIN])
+
+        os.environ["KEYFORGE_PKCS11_PIN"] = WRONG_PIN
+        self._configure()
+        with mock.patch("getpass.getpass", side_effect=AssertionError("prompted")):
+            prov = pkcs11_from_env()
+        self.assertEqual(prov.token._pin, PIN)
+        self.assertEqual(os.environ.get("KEYFORGE_PKCS11_PIN"), WRONG_PIN)
+        self.assertNotIn(PIN, os.environ.values())
+
+    def test_prompted_pin_does_not_reach_child_processes(self):
+        os.environ["KEYFORGE_PKCS11_PIN"] = "env-pin"
+        read_user_pin(lambda _prompt: PIN)
+        self.assertEqual(self._child_env_pin(), "env-pin")
+
+        os.environ.pop("KEYFORGE_PKCS11_PIN", None)
+        read_user_pin(lambda _prompt: PIN)
+        self.assertEqual(self._child_env_pin(), "")
+        self.assertIsNone(os.environ.get("KEYFORGE_PKCS11_PIN"))
 
 
 if __name__ == "__main__":

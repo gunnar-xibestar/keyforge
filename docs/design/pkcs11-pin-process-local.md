@@ -1,6 +1,6 @@
 # Process-local PKCS#11 user PIN
 
-Design only. This note does not change code. Forge Lead should review it, and Gunnar must approve it before implementation.
+Phase 1 of this note is implemented. Phase 2 is not. The sections below are the approved design, including the pre-change behavior they describe. Forge Lead should review the implementation, and Gunnar must approve the merge.
 
 `read_user_pin` in `keyforge/kms.py` asks for the token user PIN and, on a non-blank answer, copies it into `os.environ["KEYFORGE_PKCS11_PIN"]` before returning it. The docstring says the value stays in this process and is not written to `keyforge.env`. The environment assignment is wider than that: the value is visible in `/proc/<pid>/environ` and is inherited by any child. The one in-process caller that depends on the side effect, rather than the return value, is `status`: it discards the return and then calls `pkcs11_from_env`, which reads the variable back.
 

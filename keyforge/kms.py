@@ -85,6 +85,9 @@ class LocalKms:
 
 
 _memory_key: bytes | None = None
+# Prompted user PIN for this process. Same shape as ``_memory_key``:
+# unset until a prompt, then reused. Never copied into ``os.environ``.
+_user_pin: str | None = None
 
 
 def memory_provider() -> LocalKms:
@@ -206,7 +209,9 @@ class Pkcs11Token:
     - ``KEYFORGE_PKCS11_MODULE``: path to the module, e.g.
       ``/usr/lib/softhsm/libsofthsm2.so``
     - ``KEYFORGE_PKCS11_TOKEN``: token label
-    - ``KEYFORGE_PKCS11_PIN``: user PIN. Read from the environment only.
+    - ``KEYFORGE_PKCS11_PIN``: user PIN when the environment already has one.
+      A missing PIN can also be passed in, taken from the process cache, or
+      read from a TTY prompt. The prompt is not copied into the environment.
       Never written to the store, logs, or error text.
     - ``KEYFORGE_PKCS11_KEY_LABEL``: AES key label on the token. A missing key
       is generated on first use. A new key cannot read secrets wrapped by an older one.
@@ -261,7 +266,11 @@ class Pkcs11Token:
         try:
             lib = pkcs11.lib(self.module_path)
             token = lib.get_token(token_label=self.token_label)
-            return _open_token(token, self._pin)
+
+            def _keep(pin: str) -> None:
+                self._pin = pin
+
+            return _open_token(token, self._pin, remember=_keep)
         except KeyForgeError:
             raise
         except Exception as e:
@@ -506,13 +515,20 @@ def _safe_exc(exc: BaseException, pin: str) -> str:
     """Exception text with ``pin`` removed, then capped at 200 characters.
 
     The PIN is removed before the cut. The cut is checked again so a sliced
-    marker cannot put the PIN back.
+    marker cannot put the PIN back. The prompted process-cache PIN is removed
+    the same way.
     """
-    detail = _redact_pin(f"{type(exc).__name__}: {exc}", pin)[:200]
-    if pin and _contains_pin(detail, pin):
-        detail = _redact_pin(detail, pin)[:200]
-    if pin and _contains_pin(detail, pin):
-        return _barrier_placeholder(pin)
+    secrets = sorted({secret for secret in (pin, _user_pin) if secret}, key=len, reverse=True)
+    detail = f"{type(exc).__name__}: {exc}"
+    for secret in secrets:
+        detail = _redact_pin(detail, secret)
+    detail = detail[:200]
+    for secret in secrets:
+        if _contains_pin(detail, secret):
+            detail = _redact_pin(detail, secret)[:200]
+    for secret in secrets:
+        if _contains_pin(detail, secret):
+            return _barrier_placeholder(secret)
     return detail
 
 
@@ -549,16 +565,18 @@ def _pin_mismatch(exc: BaseException) -> bool:
     return type(exc).__name__ == "PinIncorrect"
 
 
-def _open_token(token, pin: str, read_secret=None):
+def _open_token(token, pin: str, read_secret=None, remember=None):
     """Log in with ``pin``. A wrong PIN is asked again until it is correct or the operator stops.
 
     A non-interactive stdin fails on the first wrong PIN. Ctrl-C exits the prompt.
     Any other token error is re-raised with the PIN removed.
+    A corrected PIN stays in the process cache. ``remember``, when passed, is
+    called with that PIN after the login succeeds so the caller can reuse it.
     """
     current = pin
     while True:
         try:
-            return token.open(rw=True, user_pin=current)
+            session = token.open(rw=True, user_pin=current)
         except Exception as e:
             if _pin_mismatch(e):
                 if not sys.stdin.isatty():
@@ -566,9 +584,14 @@ def _open_token(token, pin: str, read_secret=None):
                 print("PIN is wrong. Ctrl-C to exit.", file=sys.stderr)
                 current = read_user_pin(read_secret)
                 continue
-            if not _mentions_pin(e, current, pin):
+            secrets = tuple(secret for secret in (current, pin, _user_pin) if secret)
+            if not _mentions_pin(e, *secrets):
                 raise
-            failure = _drop_chain(_exception_without_pin(e, current, pin))
+            failure = _drop_chain(_exception_without_pin(e, *secrets))
+        else:
+            if remember is not None and current != pin:
+                remember(current)
+            return session
         raise failure
 
 
@@ -597,7 +620,8 @@ def confirm_user_pin(module: str, token_label: str, pin: str) -> None:
         close()
         return
     except Exception as e:
-        if not _mentions_pin(e, pin):
+        secrets = (pin, _user_pin) if _user_pin else (pin,)
+        if not _mentions_pin(e, *secrets):
             raise
         failure = _drop_chain(KeyForgeError(
             f"PKCS#11 session close failed ({_safe_exc(e, pin)})"
@@ -648,29 +672,47 @@ def destroy_aes_labels(module: str, token_label: str, pin: str, labels: list[str
 def read_user_pin(read_secret=None) -> str:
     """Ask for the token user PIN. A blank entry prints ``input blank`` and asks again.
 
-    The value is kept in this process only. It is not written to ``keyforge.env``.
+    The value is stored in this process only. It is not written to ``os.environ``
+    or to ``keyforge.env``.
     """
+    global _user_pin
     import getpass
     read_secret = read_secret or getpass.getpass
     while True:
         pin = read_secret("KEYFORGE_PKCS11_PIN: ")
         if pin:
-            os.environ["KEYFORGE_PKCS11_PIN"] = pin
+            _user_pin = pin
             return pin
         print("input blank", file=sys.stderr)
 
 
-def pkcs11_from_env() -> Pkcs11Kms:
-    module = os.environ.get("KEYFORGE_PKCS11_MODULE", "")
-    token = os.environ.get("KEYFORGE_PKCS11_TOKEN", "")
-    pin = os.environ.get("KEYFORGE_PKCS11_PIN", "")
-    label = os.environ.get("KEYFORGE_PKCS11_KEY_LABEL", "")
-    if not pin and module and token and label:
+def _resolve_user_pin(pin: str | None, module: str, token: str, label: str) -> str:
+    """Argument, then the process cache, then ``KEYFORGE_PKCS11_PIN``, then a TTY prompt.
+
+    A prompt runs only when the module, token label, and key label are all
+    present. Otherwise the caller reports the missing settings and does not ask.
+    """
+    if pin:
+        return pin
+    if _user_pin:
+        return _user_pin
+    env_pin = os.environ.get("KEYFORGE_PKCS11_PIN", "")
+    if env_pin:
+        return env_pin
+    if module and token and label:
         if not sys.stdin.isatty():
             raise KeyForgeError("no terminal")
-        pin = read_user_pin()
+        return read_user_pin()
+    return ""
+
+
+def pkcs11_from_env(pin: str | None = None) -> Pkcs11Kms:
+    module = os.environ.get("KEYFORGE_PKCS11_MODULE", "")
+    token = os.environ.get("KEYFORGE_PKCS11_TOKEN", "")
+    label = os.environ.get("KEYFORGE_PKCS11_KEY_LABEL", "")
+    resolved = _resolve_user_pin(pin, module, token, label)
     missing = [n for n, v in (("KEYFORGE_PKCS11_MODULE", module), ("KEYFORGE_PKCS11_TOKEN", token),
-                              ("KEYFORGE_PKCS11_PIN", pin), ("KEYFORGE_PKCS11_KEY_LABEL", label)) if not v]
+                              ("KEYFORGE_PKCS11_PIN", resolved), ("KEYFORGE_PKCS11_KEY_LABEL", label)) if not v]
     if missing:
         message = "PKCS#11 provider is missing " + ", ".join(missing)
         if "KEYFORGE_PKCS11_PIN" in missing and not (module and token and label):
@@ -678,7 +720,7 @@ def pkcs11_from_env() -> Pkcs11Kms:
             conf = os.environ.get("SOFTHSM2_CONF") or os.path.expanduser("~/.keyforge/softhsm/softhsm2.conf")
             message += "\n" + setup_instructions(no_token=not matching_tokens("keyforge", conf))
         raise KeyForgeError(message)
-    return Pkcs11Kms(Pkcs11Token(module, token, pin, label), label)
+    return Pkcs11Kms(Pkcs11Token(module, token, resolved, label), label)
 
 
 def provider_for(store=None):
@@ -729,7 +771,7 @@ def format_status(info: dict) -> list[str]:
     return lines
 
 
-def status(store_path: str | None = None) -> dict:
+def status(store_path: str | None = None, pin: str | None = None) -> dict:
     """Describe the configured KMS without printing secrets or the PKCS#11 PIN.
 
     Used by ``keyforge kms status``. Auth0 login does not use the KMS; only
@@ -747,13 +789,14 @@ def status(store_path: str | None = None) -> dict:
         module_path = os.path.expanduser(module) if module else ""
         token = os.environ.get("KEYFORGE_PKCS11_TOKEN", "")
         label = os.environ.get("KEYFORGE_PKCS11_KEY_LABEL", "")
-        pin_set = bool(os.environ.get("KEYFORGE_PKCS11_PIN", ""))
-        if not pin_set and module and token and label:
-            if not sys.stdin.isatty():
-                info["no_terminal"] = True
-                return info
-            read_user_pin()
-            pin_set = True
+        try:
+            resolved = _resolve_user_pin(pin, module, token, label)
+        except KeyForgeError as e:
+            if str(e) != "no terminal":
+                raise
+            info["no_terminal"] = True
+            return info
+        pin_set = bool(resolved)
         try:
             import pkcs11  # noqa: F401
             binding = True
@@ -785,7 +828,7 @@ def status(store_path: str | None = None) -> dict:
             info["missing"] = missing
             return info
         try:
-            kms = pkcs11_from_env()
+            kms = pkcs11_from_env(resolved)
             with kms.token._session():
                 pass
             info["ready"] = True

@@ -64,9 +64,9 @@ If `keyforge-kek` is absent and other AES keys are on the token, those other key
 
 The new-key warning is printed only when the label was just entered, that key is present, and no PIN was saved yet.
 
-A missing AES key is still generated on first use (create, rotate, or reveal). That generation does not ask for a new PIN; it uses the same `KEYFORGE_PKCS11_PIN` already used to open the token session.
+A missing AES key is still generated on first use (create, rotate, or reveal). That generation does not ask for a new PIN; it uses the PIN already held on the token session, from `KEYFORGE_PKCS11_PIN`, the process cache, or the prompt that opened the session.
 
-The PIN is stored in `keyforge.env` at mode 0600. It is not written to the store or to logs. A later TTY prompt for a missing PIN stays in the process only and is not written back to `keyforge.env`.
+The PIN is stored in `keyforge.env` at mode 0600. It is not written to the store or to logs. A later TTY prompt for a missing PIN stays in the process only. It is not copied into the environment and it is not written back to `keyforge.env`.
 
 `keyforge kms status` reports `provider: pkcs11` and `ready: True`, or lists what is missing. Setup prints that same status at the end under `kms` when it succeeds.
 

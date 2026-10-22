@@ -3,7 +3,7 @@ import io, os, stat, tempfile, unittest
 from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
 
-from keyforge import auth, cli
+from keyforge import auth, cli, kms
 from keyforge import setup as setup_mod
 from keyforge.auth import Principal
 
@@ -17,6 +17,7 @@ def _run(*argv):
 
 class SetupTests(unittest.TestCase):
     def setUp(self):
+        kms._user_pin = None
         self.d = tempfile.TemporaryDirectory()
         self.env_file = os.path.join(self.d.name, "keyforge.env")
         self._saved = {k: os.environ.get(k) for k in (
@@ -35,6 +36,7 @@ class SetupTests(unittest.TestCase):
         self.seen = []
 
     def tearDown(self):
+        kms._user_pin = None
         for k, v in self._saved.items():
             if v is None:
                 os.environ.pop(k, None)
