@@ -2,6 +2,7 @@
 import io, os, stat, tempfile, unittest
 from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 from keyforge import auth, cli, kms
 from keyforge import setup as setup_mod
@@ -363,6 +364,66 @@ class SetupTests(unittest.TestCase):
         self.assertIn("input blank", self.lines)
         self.assertNotIn("SoftHSM setup:", self.lines)
         self.assertIn("KEYFORGE_PKCS11_PIN=pin-secret", Path(self.env_file).read_text())
+
+    def test_setup_after_a_prompt_uses_that_pin_and_does_not_ask_again(self):
+        # A prior prompt lives only in the process cache. Setup must use the
+        # PIN it just collected, not that cache and not a second prompt.
+        kms._user_pin = "prompted-pin"
+        answers = iter(["pkcs11", "", "keyforge-kek", "n"])
+        secrets = iter(["pin-secret", "so-pin"])
+        prompts = []
+        seen = []
+
+        def read_line(prompt):
+            prompts.append(prompt)
+            return next(answers)
+
+        def read_secret(prompt):
+            prompts.append(prompt)
+            return next(secrets)
+
+        real_init = kms.Pkcs11Token.__init__
+
+        def record_pin(self, module_path, token_label, pin, key_label):
+            seen.append(pin)
+            real_init(self, module_path, token_label, pin, key_label)
+
+        class _Open:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        real_init_token = setup_mod.init_token
+        real_confirm = setup_mod.confirm_user_pin
+        real_labels = setup_mod.list_aes_labels
+        setup_mod.init_token = lambda *a, **k: "/tmp/softhsm2.conf"
+        setup_mod.confirm_user_pin = lambda *a, **k: None
+        setup_mod.list_aes_labels = lambda *a, **k: None
+        try:
+            with mock.patch("sys.stdin.isatty", return_value=True), \
+                 mock.patch("getpass.getpass", side_effect=AssertionError("prompted")), \
+                 mock.patch.object(kms.Pkcs11Token, "__init__", record_pin), \
+                 mock.patch.object(kms.Pkcs11Token, "_session", lambda self: _Open()):
+                setup_mod.run(read_line=read_line, read_secret=read_secret, echo=self._echo)
+        finally:
+            setup_mod.init_token = real_init_token
+            setup_mod.confirm_user_pin = real_confirm
+            setup_mod.list_aes_labels = real_labels
+        self.assertEqual(prompts.count("KEYFORGE_PKCS11_PIN: "), 1)
+        self.assertEqual(seen, ["pin-secret"])
+        self.assertEqual(kms._user_pin, "prompted-pin")
+        self.assertEqual(os.environ.get("KEYFORGE_PKCS11_PIN"), "pin-secret")
+        text = "\n".join(self.lines)
+        self.assertNotIn("prompted-pin", text)
+        self.assertNotIn("missing: KEYFORGE_PKCS11_PIN", text)
+        self.assertNotRegex(text, r"missing:.*KEYFORGE_PKCS11_PIN")
+        self.assertNotIn("no terminal", text)
+        self.assertIn("pin_set: True", text)
+        body = Path(self.env_file).read_text()
+        self.assertIn("KEYFORGE_PKCS11_PIN=pin-secret", body)
+        self.assertNotIn("prompted-pin", body)
 
     def test_wrong_auth0_password_is_asked_again(self):
         os.environ["AUTH0_DOMAIN"] = "tenant.example.test"
