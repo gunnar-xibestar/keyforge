@@ -1,0 +1,173 @@
+[
+  {
+    "action": "create",
+    "actor": "cli-tester",
+    "details": {
+      "env": "test",
+      "name": "zeta",
+      "scopes": [
+        "read:packets",
+        "write:battery"
+      ]
+    },
+    "hash": "7e44a70f7e5f992eebd5cae705c7d906a15f4e0199adeb086e2a8c6729772a5f",
+    "key_id": "key_000000000001",
+    "os_uid": 1000,
+    "os_user": "cli-tester",
+    "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "ts": "2026-01-01T00:00:03Z"
+  },
+  {
+    "action": "create",
+    "actor": "cli-tester",
+    "details": {
+      "env": "live",
+      "name": "alpha",
+      "scopes": [
+        "read:status"
+      ]
+    },
+    "hash": "8a372b3fb7de80a3983a4942701ba5a29b637d75b12b8b100f3b5893ed77ab9b",
+    "key_id": "key_000000000002",
+    "os_uid": 1000,
+    "os_user": "cli-tester",
+    "prev_hash": "7e44a70f7e5f992eebd5cae705c7d906a15f4e0199adeb086e2a8c6729772a5f",
+    "ts": "2026-01-01T00:00:08Z"
+  },
+  {
+    "action": "reveal",
+    "actor": "cli-tester",
+    "details": {
+      "kms": "local"
+    },
+    "hash": "e0cbc76ec8aa28dbf8983a0e1961aa255b5edc2caea38f72aa4f49dc3effde4b",
+    "key_id": "key_000000000001",
+    "os_uid": 1000,
+    "os_user": "cli-tester",
+    "prev_hash": "8a372b3fb7de80a3983a4942701ba5a29b637d75b12b8b100f3b5893ed77ab9b",
+    "ts": "2026-01-01T00:00:20Z"
+  },
+  {
+    "action": "verify_ok",
+    "actor": "cli-tester",
+    "details": {
+      "ip": "10.1.2.3",
+      "scope": "read:packets"
+    },
+    "hash": "9e1cd818f9da7c33b58e96cf22cf4d5c1fdc8f84bc01f1b386c83a1efd36fae8",
+    "key_id": "key_000000000001",
+    "os_uid": 1000,
+    "os_user": "cli-tester",
+    "prev_hash": "e0cbc76ec8aa28dbf8983a0e1961aa255b5edc2caea38f72aa4f49dc3effde4b",
+    "ts": "2026-01-01T00:00:24Z"
+  },
+  {
+    "action": "create",
+    "actor": "cli-tester",
+    "details": {
+      "env": "test",
+      "name": "zeta",
+      "scopes": [
+        "read:packets",
+        "write:battery"
+      ]
+    },
+    "hash": "d43d0debf3ac14dfdf3f0d6a95c17f9b90a2276c3776fb1a58159ba290cd2448",
+    "key_id": "key_000000000003",
+    "os_uid": 1000,
+    "os_user": "cli-tester",
+    "prev_hash": "9e1cd818f9da7c33b58e96cf22cf4d5c1fdc8f84bc01f1b386c83a1efd36fae8",
+    "ts": "2026-01-01T00:00:34Z"
+  },
+  {
+    "action": "rotate",
+    "actor": "cli-tester",
+    "details": {
+      "grace_until": "2026-01-02T00:00:30Z",
+      "new_key": "key_000000000003"
+    },
+    "hash": "5291e8de6befcffa5fe34059159f315ff8ad99a4fa9aed7f6143d40cc092d658",
+    "key_id": "key_000000000001",
+    "os_uid": 1000,
+    "os_user": "cli-tester",
+    "prev_hash": "d43d0debf3ac14dfdf3f0d6a95c17f9b90a2276c3776fb1a58159ba290cd2448",
+    "ts": "2026-01-01T00:00:35Z"
+  },
+  {
+    "action": "suspend",
+    "actor": "cli-tester",
+    "details": {
+      "reason": "maintenance"
+    },
+    "hash": "3019322308d3fc01d0126bbece9f341651f75545155c0949fceb886060c6a50b",
+    "key_id": "key_000000000003",
+    "os_uid": 1000,
+    "os_user": "cli-tester",
+    "prev_hash": "5291e8de6befcffa5fe34059159f315ff8ad99a4fa9aed7f6143d40cc092d658",
+    "ts": "2026-01-01T00:00:45Z"
+  },
+  {
+    "action": "resume",
+    "actor": "cli-tester",
+    "details": {},
+    "hash": "587b9e22c60a654feaa92c2a7638eb56e6ea53eedf54a9fd8e3870273c360b07",
+    "key_id": "key_000000000003",
+    "os_uid": 1000,
+    "os_user": "cli-tester",
+    "prev_hash": "3019322308d3fc01d0126bbece9f341651f75545155c0949fceb886060c6a50b",
+    "ts": "2026-01-01T00:00:48Z"
+  },
+  {
+    "action": "update",
+    "actor": "cli-tester",
+    "details": {
+      "changes": {
+        "description": "rotated gateway",
+        "labels": {
+          "cost": "ops",
+          "region": "us",
+          "tier": "gold"
+        },
+        "rate_limit": 50,
+        "scopes": [
+          "admin:read",
+          "read:packets",
+          "write:battery"
+        ]
+      }
+    },
+    "hash": "c56770289ffc9758c514805838e66877c1ef7a67c32274e830d98e0178eadc89",
+    "key_id": "key_000000000003",
+    "os_uid": 1000,
+    "os_user": "cli-tester",
+    "prev_hash": "587b9e22c60a654feaa92c2a7638eb56e6ea53eedf54a9fd8e3870273c360b07",
+    "ts": "2026-01-01T00:00:51Z"
+  },
+  {
+    "action": "revoke",
+    "actor": "cli-tester",
+    "details": {
+      "reason": "leak"
+    },
+    "hash": "96ac8ff3a41f49d67d3aa7dbf9f7064420826873c6f71e3e85384bfd5963d93b",
+    "key_id": "key_000000000001",
+    "os_uid": 1000,
+    "os_user": "cli-tester",
+    "prev_hash": "c56770289ffc9758c514805838e66877c1ef7a67c32274e830d98e0178eadc89",
+    "ts": "2026-01-01T00:00:56Z"
+  },
+  {
+    "action": "policy_set",
+    "actor": "cli-tester",
+    "details": {
+      "field": "max_ttl",
+      "value": "90d"
+    },
+    "hash": "d96b15a0a9e22495554c5c014c6d52949d2843a8b1b940ef59627ca9e746657a",
+    "key_id": null,
+    "os_uid": 1000,
+    "os_user": "cli-tester",
+    "prev_hash": "96ac8ff3a41f49d67d3aa7dbf9f7064420826873c6f71e3e85384bfd5963d93b",
+    "ts": "2026-01-01T00:00:58Z"
+  }
+]
