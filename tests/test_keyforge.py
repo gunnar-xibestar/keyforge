@@ -107,8 +107,12 @@ class TestCLI(Base):
         # JSON: kms provider, expires_at null when unset (not the display string); oldest first
         rc, out, _ = run("list", "--format", "json")
         rows = json.loads(out)
-        self.assertEqual([r["name"] for r in rows], ["n1", "dated"])
-        self.assertLessEqual(rows[0]["created_at"], rows[1]["created_at"])
+        # Oldest created_at first. Keys created in the same second tie-break by id.
+        self.assertEqual(
+            [(r["created_at"], r["id"]) for r in rows],
+            sorted((r["created_at"], r["id"]) for r in rows),
+        )
+        self.assertCountEqual([r["name"] for r in rows], ["n1", "dated"])
         by_name = {r["name"]: r for r in rows}
         self.assertEqual(by_name["n1"]["kms"], "local")
         self.assertIsNone(by_name["n1"]["expires_at"])
@@ -135,7 +139,13 @@ class TestCLI(Base):
         self.assertEqual(cols[-1], "team")
         self.assertEqual(cols.index("created_at"), cols.index("effective_status") + 1)
         self.assertEqual(cols.index("kms"), cols.index("expires_at") + 1)
-        self.assertEqual([line.split(",")[1] for line in body], ["n1", "dated"])
+        parsed = [line.split(",") for line in body]
+        id_i, name_i, created_i = cols.index("id"), cols.index("name"), cols.index("created_at")
+        self.assertEqual(
+            [(p[created_i], p[id_i]) for p in parsed],
+            sorted((p[created_i], p[id_i]) for p in parsed),
+        )
+        self.assertCountEqual([p[name_i] for p in parsed], ["n1", "dated"])
         n1 = next(line for line in body if line.split(",")[1] == "n1")
         dated = next(line for line in body if line.split(",")[1] == "dated")
         self.assertEqual(n1.split(",")[cols.index("expires_at")], "NO EXP")
@@ -160,6 +170,22 @@ class TestCLI(Base):
         rc, out, _ = run("list")
         self.assertIn("NO EXP", out)
         self.assertRegex(out, r"(?m)^\S+\s+n1\s+.*\s+NO EXP\s+-\s+")
+
+    def test_list_identical_created_at_orders_by_id(self):
+        st = Store(self.path)
+        stamp = "2024-06-01T00:00:00Z"
+        ids, names = [], []
+        for name in ("c", "a", "b"):
+            k, _ = svc.create(st, name=name, owner="alice")
+            st.data["keys"][k.id]["created_at"] = stamp
+            ids.append(k.id)
+            names.append(name)
+        # Store iteration order is the reverse of id, so a created_at-only sort would not match.
+        for kid in sorted(ids, reverse=True):
+            st.data["keys"][kid] = st.data["keys"].pop(kid)
+        listed = svc.list_keys(st)
+        self.assertEqual([(k.id, k.name) for k in listed], sorted(zip(ids, names)))
+        self.assertEqual([k.created_at for k in listed], [stamp, stamp, stamp])
 
     def test_policy(self):
         run("policy", "set", "max_ttl", "30d"); run("policy", "set", "allowed_scopes", "read:*,write:battery")
