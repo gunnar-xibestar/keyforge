@@ -147,8 +147,33 @@ class _Token:
         return _Session(self)
 
 
+def _pkcs11_module_names():
+    return [name for name in list(sys.modules) if name == "pkcs11" or name.startswith("pkcs11.")]
+
+
+def _snapshot_pkcs11():
+    """Remove every cached ``pkcs11`` module and return the previous entries.
+
+    Putting back only ``pkcs11`` and ``pkcs11.mechanisms`` leaves the rest of
+    the real package loaded. The next import then binds a different ``KeyType``
+    than ``pkcs11._pkcs11``, and SoftHSM ``generate_key`` raises
+    ``ArgumentsBad: key_type must be KeyType``.
+    """
+    saved = {name: sys.modules[name] for name in _pkcs11_module_names()}
+    for name in saved:
+        del sys.modules[name]
+    return saved
+
+
+def _restore_pkcs11(saved):
+    for name in _pkcs11_module_names():
+        del sys.modules[name]
+    sys.modules.update(saved)
+
+
 def _install_pkcs11(testcase, token):
     import types
+    saved = _snapshot_pkcs11()
     mod = types.ModuleType("pkcs11")
     mechanisms = types.ModuleType("pkcs11.mechanisms")
 
@@ -184,8 +209,7 @@ def _install_pkcs11(testcase, token):
     mod.lib = lambda path: type("Lib", (), {"get_token": lambda self, token_label=None: token})()
     sys.modules["pkcs11"] = mod
     sys.modules["pkcs11.mechanisms"] = mechanisms
-    testcase.addCleanup(lambda: sys.modules.pop("pkcs11", None))
-    testcase.addCleanup(lambda: sys.modules.pop("pkcs11.mechanisms", None))
+    testcase.addCleanup(_restore_pkcs11, saved)
 
 
 class _EnvCase(unittest.TestCase):
@@ -556,13 +580,14 @@ class PinRedactionTests(_EnvCase):
                 raise ImportError("blocked for test")
             return real_import(name, globals, locals, fromlist, level)
 
-        sys.modules.pop("pkcs11", None)
+        saved = _snapshot_pkcs11()
         builtins.__import__ = block_pkcs11
         try:
             with self.assertRaises(KeyForgeError) as cm:
                 confirm_user_pin(__file__, "keyforge", PIN)
         finally:
             builtins.__import__ = real_import
+            _restore_pkcs11(saved)
         self.assertIn("python-pkcs11", str(cm.exception))
         self.assertPinHidden(PIN, exc=cm.exception)
 
@@ -660,6 +685,25 @@ class PinRedactionTests(_EnvCase):
         self.assertIn("generated a new AES-256 key", err.getvalue())
         self.assertPinHidden(
             PIN, err.getvalue(), "\n".join(logs), json.dumps(wrapped), repr(tok), repr(prov))
+
+    def test_pkcs11_stub_restores_keytype_identity(self):
+        try:
+            import pkcs11
+            from pkcs11 import KeyType
+        except ImportError:
+            self.skipTest("python-pkcs11 is not installed")
+        saved = _snapshot_pkcs11()
+        try:
+            import types
+            sys.modules["pkcs11"] = types.ModuleType("pkcs11")
+            sys.modules["pkcs11.mechanisms"] = types.ModuleType("pkcs11.mechanisms")
+        finally:
+            _restore_pkcs11(saved)
+        import pkcs11._pkcs11 as ext
+        from pkcs11 import KeyType as current
+        self.assertIs(current, KeyType)
+        self.assertIs(current, ext.KeyType)
+        self.assertIsInstance(current.AES, ext.KeyType)
 
     def test_session_retries_on_a_tty_without_logging_pins(self):
         stub, _tok = self._token()
