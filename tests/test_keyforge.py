@@ -104,6 +104,15 @@ class TestCLI(Base):
     def test_list_kms_and_no_exp(self):
         self.create()  # no expires_at
         self.create("--name", "dated", "--owner", "alice", "--expires-in", "7d", "--team", "blue")
+        # List sorts only by created_at. Equal timestamps follow store iteration
+        # order, so pin distinct times with n1 older than dated.
+        st = Store(self.path)
+        for rec in st.data["keys"].values():
+            if rec["name"] == "n1":
+                rec["created_at"] = "2026-01-01T00:00:00Z"
+            elif rec["name"] == "dated":
+                rec["created_at"] = "2026-01-01T00:00:01Z"
+        st.save(); st.close()
         # JSON: kms provider, expires_at null when unset (not the display string); oldest first
         rc, out, _ = run("list", "--format", "json")
         rows = json.loads(out)

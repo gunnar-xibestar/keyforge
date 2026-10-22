@@ -1,0 +1,4 @@
+{
+  "valid": false,
+  "reason": "key has an ip allow list but no client ip was supplied"
+}
