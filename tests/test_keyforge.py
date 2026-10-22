@@ -102,8 +102,22 @@ class TestCLI(Base):
         rc, out, _ = run("list", "--env", "live", "--status", "active"); self.assertIn("n2", out)
 
     def test_list_kms_and_no_exp(self):
-        self.create()  # no expires_at
-        self.create("--name", "dated", "--owner", "alice", "--expires-in", "7d", "--team", "blue")
+        # created_at is truncated to a whole second. Two creates in that same second
+        # tie, and a reloaded store iterates keys in id order, so oldest-first is only
+        # deterministic when the timestamps differ.
+        clock = {"t": now()}
+
+        def tick():
+            clock["t"] += timedelta(seconds=1)
+            return clock["t"]
+
+        real_now = svc.now
+        svc.now = tick
+        try:
+            self.create()  # no expires_at
+            self.create("--name", "dated", "--owner", "alice", "--expires-in", "7d", "--team", "blue")
+        finally:
+            svc.now = real_now
         # JSON: kms provider, expires_at null when unset (not the display string); oldest first
         rc, out, _ = run("list", "--format", "json")
         rows = json.loads(out)
