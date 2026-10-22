@@ -1,0 +1,9 @@
+{
+  "max_ttl": "90d",
+  "require_expiry": false,
+  "allowed_scopes": [],
+  "required_labels": [],
+  "max_rate_limit": null,
+  "live_requires_ip_allow": false,
+  "default_grace_period": "24h"
+}
