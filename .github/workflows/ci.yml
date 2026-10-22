@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install SoftHSM2
+        run: sudo apt-get update && sudo apt-get install -y softhsm2
+
+      - name: Install the package, pytest, and coverage
+        # python-pkcs11 is what SoftHsmTests uses to open the token.
+        run: pip install -e . pytest coverage python-pkcs11
+
+      - name: Run tests
+        run: coverage run -m pytest
+
+      - name: Coverage report
+        if: always()
+        run: coverage report
