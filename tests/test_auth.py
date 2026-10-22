@@ -1065,13 +1065,17 @@ class AuthTests(unittest.TestCase):
             auth.load_principal()
         self.assertIn("overstuffed", str(cm.exception))
 
-        # Parent directories are not re-checked. A 0600 file in a world-accessible directory still loads.
+        # A 0600 file in a world-writable directory is refused. Restoring 0700 lets it load again.
         self._login(token)
         os.chmod(self.d.name, 0o777)
         try:
-            self.assertEqual(auth.load_principal().sub, "auth0|alice")
+            with self.assertRaises(AuthError) as cm:
+                auth.load_principal()
+            self.assertIn("group/world writable", str(cm.exception))
+            self.assertNotIn(token, str(cm.exception))
         finally:
             os.chmod(self.d.name, 0o700)
+        self.assertEqual(auth.load_principal().sub, "auth0|alice")
 
         auth.logout()
         self.assertFalse(os.path.exists(self.token_file))
@@ -1087,6 +1091,126 @@ class AuthTests(unittest.TestCase):
         rc, out, err = _run("auth", "logout")
         self.assertEqual(rc, 0, err)
         self.assertIn("logged out", out)
+
+    def test_load_rejects_group_or_world_writable_token_directory(self):
+        token = self.sign(self.payload())
+        self._login(token)
+        original = Path(self.token_file).read_text()
+        # Write bits are the refusal. Group/world read or execute on the directory is still loaded,
+        # and load does not tighten the directory (that happens on write).
+        cases = (
+            (0o770, True),
+            (0o720, True),
+            (0o707, True),
+            (0o702, True),
+            (0o777, True),
+            (0o755, False),
+            (0o750, False),
+            (0o705, False),
+            (0o700, False),
+        )
+        for mode, reject in cases:
+            with self.subTest(mode=oct(mode)):
+                os.chmod(self.d.name, mode)
+                try:
+                    if reject:
+                        with self.assertRaises(AuthError) as cm:
+                            auth.load_principal()
+                        self.assertIn("group/world writable", str(cm.exception))
+                        self.assertIn("chmod 700", str(cm.exception))
+                        self.assertNotIn(token, str(cm.exception))
+                        self.assertEqual(Path(self.token_file).read_text(), original)
+                    else:
+                        self.assertEqual(auth.load_principal().sub, "auth0|alice")
+                        self.assertEqual(stat.S_IMODE(os.stat(self.d.name).st_mode), mode)
+                finally:
+                    os.chmod(self.d.name, 0o700)
+
+    def test_existing_token_directory_is_tightened_on_write(self):
+        token = self.sign(self.payload())
+        parent = os.path.join(self.d.name, "already")
+        os.mkdir(parent)
+        os.chmod(parent, 0o755)
+        os.chmod(self.d.name, 0o755)
+        nested = os.path.join(parent, "tokens.json")
+        os.environ["KEYFORGE_TOKEN_FILE"] = nested
+        try:
+            self._login(token)
+            self.assertEqual(stat.S_IMODE(os.stat(parent).st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(os.stat(nested).st_mode), 0o600)
+            # Only the token directory is tightened. The ancestor keeps the mode it had.
+            self.assertEqual(stat.S_IMODE(os.stat(self.d.name).st_mode), 0o755)
+            os.chmod(parent, 0o777)
+            self._login(token)
+            self.assertEqual(stat.S_IMODE(os.stat(parent).st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(os.stat(nested).st_mode), 0o600)
+            self.assertEqual(auth.load_principal().sub, "auth0|alice")
+        finally:
+            os.chmod(self.d.name, 0o700)
+            os.environ["KEYFORGE_TOKEN_FILE"] = self.token_file
+
+    def test_logout_overwrites_token_before_unlink(self):
+        token = self.sign(self.payload())
+        self._login(token)
+        before = Path(self.token_file).read_bytes()
+        self.assertIn(b"refresh-opaque", before)
+        self.assertIn(token.encode(), before)
+        seen = {}
+        real_remove = os.remove
+
+        def spy(path):
+            seen["data"] = Path(path).read_bytes()
+            return real_remove(path)
+
+        with mock.patch("keyforge.auth.os.remove", spy):
+            auth.logout()
+        self.assertEqual(seen["data"], b"\0" * len(before))
+        self.assertNotIn(b"refresh-opaque", seen["data"])
+        self.assertNotIn(token.encode(), seen["data"])
+        self.assertFalse(os.path.exists(self.token_file))
+        auth.logout()
+
+        # A failed wipe must not fail logout or leave the file behind.
+        self._login(token)
+        with mock.patch("keyforge.auth.os.open", side_effect=OSError("wipe failed")):
+            auth.logout()
+        self.assertFalse(os.path.exists(self.token_file))
+
+        # Overwrite must not follow a symlink and destroy the target.
+        target = os.path.join(self.d.name, "real.json")
+        Path(target).write_text("KEEP-SECRET")
+        os.chmod(target, 0o600)
+        os.symlink(target, self.token_file)
+        auth.logout()
+        self.assertFalse(os.path.lexists(self.token_file))
+        self.assertEqual(Path(target).read_text(), "KEEP-SECRET")
+
+    def test_load_reports_unreadable_token_directory(self):
+        self._login(self.sign(self.payload()))
+        with mock.patch("keyforge.auth.os.stat", side_effect=OSError(13, "Permission denied")):
+            with self.assertRaises(AuthError) as cm:
+                auth.load_principal()
+        self.assertIn("token directory unusable", str(cm.exception))
+        self.assertIn("Permission denied", str(cm.exception))
+        self.assertNotIn("access_token", str(cm.exception))
+
+    def test_logout_skips_wipe_when_descriptor_is_not_regular(self):
+        self._login(self.sign(self.payload()))
+        real_fstat = os.fstat
+
+        def fake_fstat(fd):
+            st = real_fstat(fd)
+            return os.stat_result((stat.S_IFIFO | 0o600,) + tuple(st)[1:])
+
+        with mock.patch("keyforge.auth.os.fstat", fake_fstat):
+            auth.logout()
+        self.assertFalse(os.path.exists(self.token_file))
+
+    def test_logout_unlinks_after_short_wipe_write(self):
+        self._login(self.sign(self.payload()))
+        with mock.patch("keyforge.auth.os.write", return_value=0):
+            auth.logout()
+        self.assertFalse(os.path.exists(self.token_file))
 
     def test_command_gates_exempt_policy_and_expiry(self):
         gates = {
