@@ -68,6 +68,13 @@ class PinIncorrect(Exception):
     """Name matches ``kms._pin_mismatch`` (it checks the class name only)."""
 
 
+class _QuietError(Exception):
+    """``str`` hides args, so a PIN on the chain or in a bytes arg is not in the message."""
+
+    def __str__(self):
+        return "token failure"
+
+
 def _dek_aad(key_id):
     return f"keyforge-dek-v1|{key_id}".encode()
 
@@ -764,6 +771,93 @@ class PinRedactionTests(_EnvCase):
         self.assertSecretGone(hostile, exc=cm.exception)
         if cm.exception.__context__ is not None:
             self.assertSecretGone(hostile, exc=cm.exception.__context__)
+
+    def _assert_raised_chain_is_clean(self, exc):
+        self.assertIsNone(exc.__cause__)
+        self.assertIsNone(exc.__context__)
+        self.assertSecretGone(PIN, exc=exc)
+
+    def test_cause_context_and_bytes_pins_are_not_reraised(self):
+        from keyforge.kms import _mentions_pin, _open_token
+
+        def with_cause(pin):
+            err = _QuietError("token failure")
+            err.__cause__ = RuntimeError(f"inner {pin}")
+            return err
+
+        def with_context(pin):
+            err = _QuietError("token failure")
+            err.__context__ = RuntimeError(f"inner {pin}")
+            err.__suppress_context__ = False
+            return err
+
+        def with_bytes(pin):
+            err = _QuietError("token failure")
+            err.args = (f"inner {pin}".encode(),)
+            return err
+
+        def with_cycle(pin):
+            err = _QuietError("token failure")
+            inner = RuntimeError(f"inner {pin}")
+            err.__cause__ = inner
+            inner.__cause__ = err
+            inner.__context__ = err
+            return err
+
+        # A cycle must terminate, and a clean chain must not count as a hit.
+        self.assertTrue(_mentions_pin(with_cause(PIN), PIN))
+        self.assertTrue(_mentions_pin(with_context(PIN), PIN))
+        self.assertTrue(_mentions_pin(with_bytes(PIN), PIN))
+        self.assertTrue(_mentions_pin(with_cycle(PIN), PIN))
+        clean = RuntimeError("token removed")
+        other = RuntimeError("offline")
+        clean.__cause__ = other
+        other.__context__ = clean
+        self.assertFalse(_mentions_pin(clean, PIN))
+
+        stub = _Token()
+        _install_pkcs11(self, stub)
+        for label, factory in (
+            ("cause", with_cause),
+            ("context", with_context),
+            ("bytes", with_bytes),
+            ("cycle", with_cycle),
+        ):
+            with self.subTest(path="open", leak=label):
+                class Token:
+                    def open(self, rw, user_pin, built=factory):
+                        raise built(user_pin)
+
+                with self.assertRaises(_QuietError) as cm:
+                    _open_token(Token(), PIN)
+                self.assertEqual(str(cm.exception), "token failure")
+                self._assert_raised_chain_is_clean(cm.exception)
+
+            with self.subTest(path="close", leak=label):
+                stub.close_error = factory(PIN)
+                with self.assertRaises(KeyForgeError) as cm:
+                    confirm_user_pin(__file__, "keyforge", PIN)
+                self.assertIn("PKCS#11 session close failed", str(cm.exception))
+                self._assert_raised_chain_is_clean(cm.exception)
+
+        # A chain that does not contain the PIN is still the original error.
+        kept = RuntimeError("token removed")
+        kept.__cause__ = RuntimeError("offline")
+
+        class CleanToken:
+            def open(self, rw, user_pin):
+                raise kept
+
+        with self.assertRaises(RuntimeError) as cm:
+            _open_token(CleanToken(), PIN)
+        self.assertIs(cm.exception, kept)
+        self.assertEqual(str(cm.exception.__cause__), "offline")
+
+        stub.close_error = kept
+        with self.assertRaises(RuntimeError) as cm:
+            confirm_user_pin(__file__, "keyforge", PIN)
+        self.assertIs(cm.exception, kept)
+        self.assertEqual(str(cm.exception.__cause__), "offline")
 
     def test_pkcs11_from_env_prompt_does_not_log_pin(self):
         os.environ["KEYFORGE_PKCS11_MODULE"] = __file__

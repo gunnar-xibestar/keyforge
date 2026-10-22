@@ -339,7 +339,9 @@ def _contains_pin(text: str, pin: str) -> bool:
 
 
 def _barrier_placeholder(pin: str) -> str:
-    """A marker that shares no casefolded character with ``pin``."""
+    # ``[redacted]`` can contain the PIN (``red``, ``act``), and the text on
+    # either side of that marker can rebuild the PIN. A marker that shares no
+    # casefolded character with the PIN cannot put it back.
     folded = pin.casefold()
 
     def ok(ch: str) -> bool:
@@ -432,13 +434,47 @@ def _redact_pin(text: str, pin: str) -> str:
     return redacted
 
 
-def _mentions_pin(exc: BaseException, *pins: str) -> bool:
+def _exception_blob(exc: BaseException) -> str:
     parts = [type(exc).__name__, str(exc)]
     for arg in getattr(exc, "args", ()):
         if isinstance(arg, str):
             parts.append(arg)
-    blob = "\n".join(parts)
-    return any(pin and _contains_pin(blob, pin) for pin in pins)
+        elif isinstance(arg, (bytes, bytearray)):
+            parts.append(arg.decode("utf-8", errors="replace"))
+    return "\n".join(parts)
+
+
+def _iter_exception_chain(exc: BaseException):
+    """Yield ``exc`` and its ``__cause__`` / ``__context__`` links, skipping cycles."""
+    seen: set[int] = set()
+    pending = [exc]
+    while pending:
+        current = pending.pop()
+        if not isinstance(current, BaseException) or id(current) in seen:
+            continue
+        seen.add(id(current))
+        yield current
+        pending.append(current.__context__)
+        pending.append(current.__cause__)
+
+
+def _mentions_pin(exc: BaseException, *pins: str) -> bool:
+    secrets = [pin for pin in pins if pin]
+    if not secrets:
+        return False
+    for current in _iter_exception_chain(exc):
+        blob = _exception_blob(current)
+        if any(_contains_pin(blob, secret) for secret in secrets):
+            return True
+    return False
+
+
+def _drop_chain(exc: BaseException) -> BaseException:
+    """Drop cause and context so a redacted exception cannot reprint a PIN."""
+    exc.__cause__ = None
+    exc.__context__ = None
+    exc.__suppress_context__ = True
+    return exc
 
 
 def _exception_without_pin(exc: BaseException, *pins: str) -> BaseException:
@@ -456,15 +492,14 @@ def _exception_without_pin(exc: BaseException, *pins: str) -> BaseException:
             rebuilt = type(exc)(message)
         except Exception:
             rebuilt = RuntimeError(f"{name}: {message}")
-    visible = str(rebuilt)
-    if any(_contains_pin(visible, secret) for secret in secrets):
+    if secrets and _mentions_pin(rebuilt, *secrets):
         safe = f"{type(exc).__name__}: {exc}"
         for secret in secrets:
             safe = _redact_pin(safe, secret)
-        if any(_contains_pin(safe, secret) for secret in secrets):
+        if _mentions_pin(RuntimeError(safe), *secrets):
             safe = _barrier_placeholder(secrets[0])
-        return RuntimeError(safe)
-    return rebuilt
+        return _drop_chain(RuntimeError(safe))
+    return _drop_chain(rebuilt)
 
 
 def _safe_exc(exc: BaseException, pin: str) -> str:
@@ -533,7 +568,7 @@ def _open_token(token, pin: str, read_secret=None):
                 continue
             if not _mentions_pin(e, current, pin):
                 raise
-            failure = _exception_without_pin(e, current, pin)
+            failure = _drop_chain(_exception_without_pin(e, current, pin))
         raise failure
 
 
@@ -564,7 +599,9 @@ def confirm_user_pin(module: str, token_label: str, pin: str) -> None:
     except Exception as e:
         if not _mentions_pin(e, pin):
             raise
-        failure = KeyForgeError(f"PKCS#11 session close failed ({_safe_exc(e, pin)})")
+        failure = _drop_chain(KeyForgeError(
+            f"PKCS#11 session close failed ({_safe_exc(e, pin)})"
+        ))
     raise failure
 
 
