@@ -388,12 +388,39 @@ def _read_token_file() -> dict:
     return data
 
 
+def _is_home_dir(directory: Path) -> bool:
+    return os.path.realpath(directory) == os.path.realpath(Path.home())
+
+
+def _tighten_token_dir(parent: Path) -> None:
+    """Tighten a token directory we own. Never chmod ``$HOME`` or someone else's directory.
+
+    A group- or world-writable directory we will not chmod is refused instead,
+    so a token is not written where another user can replace it. ``mkdir``
+    leaves an existing directory's mode unchanged; this is the follow-up.
+    """
+    try:
+        st = os.stat(parent)
+    except OSError as e:
+        raise AuthError(f"token directory unusable: {e.strerror or e}")
+    if st.st_uid == os.getuid() and not _is_home_dir(parent):
+        try:
+            os.chmod(parent, 0o700)
+        except OSError as e:
+            detail = e.strerror or str(e)
+            raise AuthError(f"token directory {parent} could not be made private: {detail}")
+        return
+    if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise AuthError(
+            f"token directory {parent} must be private; chmod 700 or set KEYFORGE_TOKEN_FILE"
+        )
+
+
 def _write_token_file(principal: Principal, access_token: str, refresh_token: str | None) -> None:
     path = token_path()
     parent = path.parent
     parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    # mkdir leaves the mode of an existing directory unchanged.
-    os.chmod(parent, 0o700)
+    _tighten_token_dir(parent)
     body = {"version": 1, "access_token": access_token, "expires_at": principal.exp,
             "token_type": "Bearer", "scope": " ".join(sorted(principal.scopes)), "sub": principal.sub}
     if refresh_token:

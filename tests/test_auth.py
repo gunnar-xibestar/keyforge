@@ -1149,6 +1149,106 @@ class AuthTests(unittest.TestCase):
             os.chmod(self.d.name, 0o700)
             os.environ["KEYFORGE_TOKEN_FILE"] = self.token_file
 
+    def test_foreign_token_directory_is_not_tightened(self):
+        token = self.sign(self.payload())
+        parent = self.d.name
+        real_stat = os.stat
+
+        def foreign_stat(path, *args, **kwargs):
+            st = real_stat(path, *args, **kwargs)
+            if os.path.abspath(path) != os.path.abspath(parent):
+                return st
+            fields = list(tuple(st))
+            fields[4] = st.st_uid + 1
+            return os.stat_result(tuple(fields))
+
+        # Group/world-writable and not ours: refuse, and do not chmod it.
+        os.chmod(parent, 0o777)
+        try:
+            with mock.patch("keyforge.auth.os.stat", foreign_stat):
+                with self.assertRaises(AuthError) as cm:
+                    self._login(token)
+            message = str(cm.exception)
+            self.assertIn(f"token directory {parent} must be private", message)
+            self.assertIn("chmod 700 or set KEYFORGE_TOKEN_FILE", message)
+            self.assertNotIn(token, message)
+            self.assertEqual(stat.S_IMODE(os.stat(parent).st_mode), 0o777)
+            self.assertFalse(os.path.exists(self.token_file))
+
+            # Private, but not ours: leave the mode alone and still store the token.
+            os.chmod(parent, 0o755)
+            with mock.patch("keyforge.auth.os.stat", foreign_stat):
+                self._login(token)
+            self.assertEqual(stat.S_IMODE(os.stat(parent).st_mode), 0o755)
+            self.assertEqual(stat.S_IMODE(os.stat(self.token_file).st_mode), 0o600)
+            self.assertEqual(auth.load_principal().sub, "auth0|alice")
+        finally:
+            os.chmod(parent, 0o700)
+
+    def test_home_token_directory_is_not_tightened(self):
+        token = self.sign(self.payload())
+        home = self.d.name
+        saved_home = os.environ.get("HOME")
+        os.environ["HOME"] = home
+        try:
+            # A directory under $HOME is still tightened. $HOME itself is not.
+            nested = os.path.join(home, ".keyforge")
+            os.mkdir(nested)
+            os.chmod(nested, 0o755)
+            os.chmod(home, 0o755)
+            os.environ["KEYFORGE_TOKEN_FILE"] = os.path.join(nested, "tokens.json")
+            self._login(token)
+            self.assertEqual(stat.S_IMODE(os.stat(nested).st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(os.stat(home).st_mode), 0o755)
+
+            # A token file directly in $HOME: do not chmod $HOME when it is already private.
+            os.environ["KEYFORGE_TOKEN_FILE"] = os.path.join(home, "tokens.json")
+            self._login(token)
+            self.assertEqual(stat.S_IMODE(os.stat(home).st_mode), 0o755)
+            self.assertEqual(stat.S_IMODE(os.stat(self.token_file).st_mode), 0o600)
+
+            # A group- or world-writable $HOME is refused instead of being chmodded.
+            os.remove(self.token_file)
+            os.chmod(home, 0o777)
+            with self.assertRaises(AuthError) as cm:
+                self._login(token)
+            message = str(cm.exception)
+            self.assertIn(f"token directory {home} must be private", message)
+            self.assertIn("chmod 700 or set KEYFORGE_TOKEN_FILE", message)
+            self.assertNotIn(token, message)
+            self.assertEqual(stat.S_IMODE(os.stat(home).st_mode), 0o777)
+            self.assertFalse(os.path.exists(self.token_file))
+        finally:
+            if saved_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = saved_home
+            os.chmod(home, 0o700)
+            os.environ["KEYFORGE_TOKEN_FILE"] = self.token_file
+
+    def test_token_directory_chmod_oserror_is_autherror(self):
+        token = self.sign(self.payload())
+        os.chmod(self.d.name, 0o755)
+        try:
+            with mock.patch("keyforge.auth.os.chmod", side_effect=PermissionError(13, "Permission denied")):
+                with self.assertRaises(AuthError) as cm:
+                    self._login(token)
+            message = str(cm.exception)
+            self.assertIn(f"token directory {self.d.name} could not be made private", message)
+            self.assertIn("Permission denied", message)
+            self.assertNotIn(token, message)
+            self.assertFalse(os.path.exists(self.token_file))
+            self.assertEqual(stat.S_IMODE(os.stat(self.d.name).st_mode), 0o755)
+        finally:
+            os.chmod(self.d.name, 0o700)
+
+    def test_token_directory_stat_oserror_is_autherror(self):
+        with mock.patch("keyforge.auth.os.stat", side_effect=OSError(13, "Permission denied")):
+            with self.assertRaises(AuthError) as cm:
+                auth._tighten_token_dir(Path(self.d.name))
+        self.assertIn("token directory unusable", str(cm.exception))
+        self.assertIn("Permission denied", str(cm.exception))
+
     def test_logout_overwrites_token_before_unlink(self):
         token = self.sign(self.payload())
         self._login(token)
