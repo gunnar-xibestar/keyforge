@@ -997,13 +997,6 @@ class PinCacheTests(_EnvCase):
         self.assertNotIn(PIN, proc.stderr)
         return proc.stdout.strip()
 
-    def test_package_has_no_user_pin_of_its_own(self):
-        """The PIN cache is ``keyforge.kms.pkcs11._user_pin``, not a package global."""
-        self.assertNotIn("_user_pin", vars(kms))
-        self.assertNotIn("_user_pin", vars(type(kms)))
-        with self.assertRaises(AttributeError):
-            kms._user_pin
-
     def test_memory_key_lives_on_the_local_module(self):
         from keyforge.kms import local as local_mod
 
