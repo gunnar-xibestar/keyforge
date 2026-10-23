@@ -113,10 +113,10 @@ class DeterministicCLI(unittest.TestCase):
         self._patchers = [
             mock.patch("keyforge.models.now", now),
             mock.patch("keyforge.service.now", now),
-            mock.patch("keyforge.audit.now", now),
+            mock.patch("keyforge.audit.log.now", now),
             mock.patch("keyforge.cli.now", now),
             mock.patch("keyforge.policy.now", now),
-            mock.patch("keyforge.audit.os_user", return_value=("cli-tester", 1000)),
+            mock.patch("keyforge.audit.log.os_user", return_value=("cli-tester", 1000)),
             mock.patch("keyforge.crypto.new_id", side_effect=lambda: next(ids)),
             mock.patch("secrets.token_bytes", rng.token_bytes),
             mock.patch("secrets.choice", rng.choice),
