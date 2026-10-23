@@ -3,7 +3,7 @@
 Auth is disabled unless ``AUTH0_DOMAIN``, ``AUTH0_CLIENT_ID`` and ``AUTH0_AUDIENCE``
 are all set. A partial set is an error (fail closed). ``AUTH0_CLIENT_SECRET`` is
 optional and is read from the environment only; it is never written to the token
-file, the store, or logs.
+file, the store, or logs, and it is stripped from Auth0 error text.
 
 Login is the OAuth 2.0 device authorization flow, or ``auth login --from-file``
 for a token response captured elsewhere. The access token is a short-lived RS256
@@ -151,13 +151,23 @@ def _json_obj(raw: bytes, what: str) -> dict:
     return obj
 
 
-def _redact(text: str, secret: str) -> str:
-    if secret and secret in text:
+def _redact(text: str, *secrets: str, limit: int | None = None) -> str:
+    """Replace secrets before applying ``limit``, so a cut cannot leave a secret prefix."""
+    for secret in sorted({s for s in secrets if s}, key=len, reverse=True):
         text = text.replace(secret, "[redacted]")
-    return text[:300]
+    return text if limit is None else text[:limit]
 
 
-def _request_json(url: str, fields: dict | None = None, timeout: float = 30) -> dict:
+def _error_parts(body: dict, *secrets: str) -> tuple[str, str]:
+    """Second pass over ``error`` and ``error_description``. HTTP descriptions are capped here."""
+    known = (os.environ.get("AUTH0_CLIENT_SECRET") or "", *secrets)
+    limit = 300 if body.get("_http_error") else None
+    error = _redact(str(body.get("error") or ""), *known)
+    description = _redact(str(body.get("error_description") or ""), *known, limit=limit)
+    return error, description
+
+
+def _request_json(url: str, fields: dict | None = None, timeout: float = 30, secret: str = "") -> dict:
     headers = {"Accept": "application/json"}
     data = None
     if fields is not None:
@@ -165,7 +175,7 @@ def _request_json(url: str, fields: dict | None = None, timeout: float = 30) -> 
         headers["Content-Type"] = "application/x-www-form-urlencoded"
     req = urllib.request.Request(url, data=data, headers=headers)
     open_ = _opener or urllib.request.urlopen
-    secret = os.environ.get("AUTH0_CLIENT_SECRET") or ""
+    client_secret = os.environ.get("AUTH0_CLIENT_SECRET") or ""
     try:
         with open_(req, timeout=timeout) as resp:
             raw = resp.read()
@@ -180,10 +190,14 @@ def _request_json(url: str, fields: dict | None = None, timeout: float = 30) -> 
             body = {}
         if not isinstance(body, dict):
             body = {}
-        return {"_http_error": e.code, "error": str(body.get("error") or f"http {e.code}"),
-                "error_description": _redact(str(body.get("error_description") or ""), secret)}
+        error = str(body.get("error") or f"http {e.code}")
+        description = str(body.get("error_description") or "")
+        # No length cap. _error_parts repeats the scrub and then caps HTTP descriptions.
+        return {"_http_error": e.code,
+                "error": _redact(error, client_secret, secret),
+                "error_description": _redact(description, client_secret, secret)}
     except Exception as e:
-        raise AuthError("Auth0 request failed: " + _redact(f"{type(e).__name__}", secret)) from None
+        raise AuthError("Auth0 request failed: " + _redact(f"{type(e).__name__}", client_secret, limit=300)) from None
     if len(raw) > 65536:
         raise AuthError("Auth0 response is overstuffed")
     try:
@@ -440,10 +454,15 @@ def _write_token_file(principal: Principal, access_token: str, refresh_token: st
     os.chmod(path, 0o600)
 
 
-def _accept_token_response(tok: dict) -> Principal:
+def _accept_token_response(tok: dict, *secrets: str) -> Principal:
     """Validate a token-endpoint body and store only the lean access token plus refresh token."""
     if tok.get("error"):
-        raise AuthError(f"Auth0 token endpoint: {tok.get('error')}: {tok.get('error_description') or ''}".rstrip(": "))
+        extras = [s for s in secrets if isinstance(s, str) and s]
+        refresh = tok.get("refresh_token")
+        if isinstance(refresh, str) and refresh:
+            extras.append(refresh)
+        error, description = _error_parts(tok, *extras)
+        raise AuthError(f"Auth0 token endpoint: {error}: {description}".rstrip(": "))
     access = tok.get("access_token")
     if not isinstance(access, str):
         raise AuthError("token response is missing an access token")
@@ -473,14 +492,11 @@ def _refresh(refresh_token: str) -> Principal:
     fields = {"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": conf["client_id"]}
     if conf["secret"]:
         fields["client_secret"] = conf["secret"]
-    body = _request_json(f"https://{conf['domain']}/oauth/token", fields)
-    desc = body.get("error_description")
-    if isinstance(desc, str) and refresh_token and refresh_token in desc:
-        body["error_description"] = desc.replace(refresh_token, "[redacted]")
+    body = _request_json(f"https://{conf['domain']}/oauth/token", fields, secret=refresh_token)
     if "refresh_token" not in body:
         body = dict(body)
         body["refresh_token"] = refresh_token
-    return _accept_token_response(body)
+    return _accept_token_response(body, refresh_token)
 
 
 def load_principal() -> Principal:
@@ -502,7 +518,7 @@ def password_login(username: str, password: str) -> Principal:
 
     Auth0 must allow the Password grant on the application. The default realm is
     ``Username-Password-Authentication`` (override with ``AUTH0_REALM``). The
-    password is not stored and is stripped from any error text Auth0 echoes.
+    password is not stored. Echoed error text is stripped of the password and client secret.
     """
     conf = _config()
     username = (username or "").strip()
@@ -524,11 +540,7 @@ def password_login(username: str, password: str) -> Principal:
     }
     if conf["secret"]:
         fields["client_secret"] = conf["secret"]
-    body = _request_json(f"https://{conf['domain']}/oauth/token", fields)
-    desc = body.get("error_description")
-    if isinstance(desc, str) and password and password in desc:
-        body = dict(body)
-        body["error_description"] = desc.replace(password, "[redacted]")
+    body = _request_json(f"https://{conf['domain']}/oauth/token", fields, secret=password)
     if body.get("error") == "unauthorized_client":
         raise AuthError(
             "Auth0 rejected the password grant for this client. "
@@ -536,7 +548,7 @@ def password_login(username: str, password: str) -> Principal:
             "then run keyforge setup again. "
             "`keyforge auth login` uses the device-code grant instead."
         )
-    return _accept_token_response(body)
+    return _accept_token_response(body, password)
 
 
 def device_login(*, prompt=None, sleep=time.sleep) -> Principal:
@@ -550,8 +562,9 @@ def device_login(*, prompt=None, sleep=time.sleep) -> Principal:
         "client_id": conf["client_id"], "scope": scope, "audience": conf["audience"],
     })
     if started.get("error") or "device_code" not in started:
-        raise AuthError("Auth0 device authorization failed: " +
-                        str(started.get("error") or "missing device_code"))
+        # This message shows ``error`` only. Both fields are scrubbed; the description is dropped.
+        error, _description = _error_parts(started)
+        raise AuthError("Auth0 device authorization failed: " + (error or "missing device_code"))
     uri = started.get("verification_uri") or started.get("verification_uri_complete") or ""
     prompt(f"Open {uri} and enter code {started.get('user_code')}")
     try:
@@ -579,7 +592,10 @@ def device_login(*, prompt=None, sleep=time.sleep) -> Principal:
             sleep(interval)
             continue
         if err:
-            raise AuthError(f"Auth0 token endpoint: {err}: {tok.get('error_description') or ''}".rstrip(": "))
+            device_code = started.get("device_code")
+            extras = (device_code,) if isinstance(device_code, str) else ()
+            error, description = _error_parts(tok, *extras)
+            raise AuthError(f"Auth0 token endpoint: {error}: {description}".rstrip(": "))
         return _accept_token_response(tok)
     raise AuthError("device code expired before authorization")
 
