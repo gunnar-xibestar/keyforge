@@ -20,14 +20,14 @@ real session. Both expose ``wrap`` / ``unwrap`` and ``Pkcs11Kms`` does not
 care which one it holds.
 """
 from __future__ import annotations
-import os, secrets
+import os
 from ..errors import KeyForgeError
 
 _PROVIDERS = ("local", "memory", "pkcs11")
 
 from . import local, pkcs11
 from .local import (
-    AESGCM, InvalidTag, LocalKms, _load_or_create_master, _wipe, local_provider, memory_provider,
+    LocalKms, _load_or_create_master, _wipe, local_provider, memory_provider,
 )
 from .pkcs11 import (
     Pkcs11Kms, Pkcs11Token, _REDACTED, _REDACTED_ALT, _barrier_placeholder, _contains_pin,
@@ -37,47 +37,6 @@ from .pkcs11 import (
     destroy_aes_labels, list_aes_labels, pkcs11_from_env, read_user_pin,
 )
 from .status import status
-
-
-class FakePkcs11Token:
-    """In-memory PKCS#11 stand-in. AES-256-GCM under a token-held key.
-
-    ``wrap`` returns ``nonce || ciphertext||tag``. The key bytes never leave
-    this object, which is the property the real token is there to provide.
-    """
-
-    def __init__(self, key: bytes, labels: tuple[str, ...] = ("keyforge-kek",)):
-        if len(key) != 32:
-            raise KeyForgeError("fake PKCS#11 token key must be 32 bytes")
-        self._key = key
-        self.labels = set(labels)
-        self.wraps = 0
-        self.unwraps = 0
-
-    def wrap(self, key_label: str, dek: bytes, aad: bytes) -> bytes:
-        if key_label not in self.labels:
-            raise KeyForgeError(f"PKCS#11 key {key_label!r} is not on the token")
-        if len(dek) != 32:
-            raise KeyForgeError("DEK must be 32 bytes")
-        nonce = secrets.token_bytes(12)
-        ct = AESGCM(self._key).encrypt(nonce, dek, aad)
-        self.wraps += 1
-        return nonce + ct
-
-    def unwrap(self, key_label: str, blob: bytes, aad: bytes) -> bytes:
-        if key_label not in self.labels:
-            raise KeyForgeError(f"PKCS#11 key {key_label!r} is not on the token")
-        if len(blob) < 12 + 16:
-            raise KeyForgeError("PKCS#11 wrapped DEK is truncated")
-        nonce, ct = blob[:12], blob[12:]
-        try:
-            dek = AESGCM(self._key).decrypt(nonce, ct, aad)
-        except InvalidTag:
-            raise KeyForgeError("PKCS#11 unwrap failed authentication")
-        self.unwraps += 1
-        if len(dek) != 32:
-            raise KeyForgeError("unwrapped DEK has an unexpected length")
-        return dek
 
 
 def provider_for(store=None):
