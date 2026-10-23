@@ -92,7 +92,7 @@ class TestAuditChainGolden(unittest.TestCase):
     def _patch_identity(self, stamps=4):
         times = iter(datetime(2026, 3, 1, 12, i, tzinfo=timezone.utc) for i in range(stamps))
         return mock.patch.multiple(
-            audit,
+            audit.log,
             now=lambda: next(times),
             actor=lambda: "alice",
             os_user=lambda: ("auditor", 1000),
