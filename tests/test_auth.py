@@ -1380,13 +1380,17 @@ class AuthTests(unittest.TestCase):
             auth.load_principal()
         self.assertIn("overstuffed", str(cm.exception))
 
-        # Parent directories are not re-checked. A 0600 file in a world-accessible directory still loads.
+        # A 0600 file in a world-writable directory is refused. Restoring 0700 lets it load again.
         self._login(token)
         os.chmod(self.d.name, 0o777)
         try:
-            self.assertEqual(auth.load_principal().sub, "auth0|alice")
+            with self.assertRaises(AuthError) as cm:
+                auth.load_principal()
+            self.assertIn("group/world writable", str(cm.exception))
+            self.assertNotIn(token, str(cm.exception))
         finally:
             os.chmod(self.d.name, 0o700)
+        self.assertEqual(auth.load_principal().sub, "auth0|alice")
 
         auth.logout()
         self.assertFalse(os.path.exists(self.token_file))
@@ -1402,6 +1406,226 @@ class AuthTests(unittest.TestCase):
         rc, out, err = _run("auth", "logout")
         self.assertEqual(rc, 0, err)
         self.assertIn("logged out", out)
+
+    def test_load_rejects_group_or_world_writable_token_directory(self):
+        token = self.sign(self.payload())
+        self._login(token)
+        original = Path(self.token_file).read_text()
+        # Write bits are the refusal. Group/world read or execute on the directory is still loaded,
+        # and load does not tighten the directory (that happens on write).
+        cases = (
+            (0o770, True),
+            (0o720, True),
+            (0o707, True),
+            (0o702, True),
+            (0o777, True),
+            (0o755, False),
+            (0o750, False),
+            (0o705, False),
+            (0o700, False),
+        )
+        for mode, reject in cases:
+            with self.subTest(mode=oct(mode)):
+                os.chmod(self.d.name, mode)
+                try:
+                    if reject:
+                        with self.assertRaises(AuthError) as cm:
+                            auth.load_principal()
+                        self.assertIn("group/world writable", str(cm.exception))
+                        self.assertIn("chmod 700", str(cm.exception))
+                        self.assertNotIn(token, str(cm.exception))
+                        self.assertEqual(Path(self.token_file).read_text(), original)
+                    else:
+                        self.assertEqual(auth.load_principal().sub, "auth0|alice")
+                        self.assertEqual(stat.S_IMODE(os.stat(self.d.name).st_mode), mode)
+                finally:
+                    os.chmod(self.d.name, 0o700)
+
+    def test_existing_token_directory_is_tightened_on_write(self):
+        token = self.sign(self.payload())
+        parent = os.path.join(self.d.name, "already")
+        os.mkdir(parent)
+        os.chmod(parent, 0o755)
+        os.chmod(self.d.name, 0o755)
+        nested = os.path.join(parent, "tokens.json")
+        os.environ["KEYFORGE_TOKEN_FILE"] = nested
+        try:
+            self._login(token)
+            self.assertEqual(stat.S_IMODE(os.stat(parent).st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(os.stat(nested).st_mode), 0o600)
+            # Only the token directory is tightened. The ancestor keeps the mode it had.
+            self.assertEqual(stat.S_IMODE(os.stat(self.d.name).st_mode), 0o755)
+            os.chmod(parent, 0o777)
+            self._login(token)
+            self.assertEqual(stat.S_IMODE(os.stat(parent).st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(os.stat(nested).st_mode), 0o600)
+            self.assertEqual(auth.load_principal().sub, "auth0|alice")
+        finally:
+            os.chmod(self.d.name, 0o700)
+            os.environ["KEYFORGE_TOKEN_FILE"] = self.token_file
+
+    def test_foreign_token_directory_is_not_tightened(self):
+        token = self.sign(self.payload())
+        parent = self.d.name
+        real_stat = os.stat
+
+        def foreign_stat(path, *args, **kwargs):
+            st = real_stat(path, *args, **kwargs)
+            if os.path.abspath(path) != os.path.abspath(parent):
+                return st
+            fields = list(tuple(st))
+            fields[4] = st.st_uid + 1
+            return os.stat_result(tuple(fields))
+
+        # Group/world-writable and not ours: refuse, and do not chmod it.
+        os.chmod(parent, 0o777)
+        try:
+            with mock.patch("keyforge.auth.os.stat", foreign_stat):
+                with self.assertRaises(AuthError) as cm:
+                    self._login(token)
+            message = str(cm.exception)
+            self.assertIn(f"token directory {parent} must be private", message)
+            self.assertIn("chmod 700 or set KEYFORGE_TOKEN_FILE", message)
+            self.assertNotIn(token, message)
+            self.assertEqual(stat.S_IMODE(os.stat(parent).st_mode), 0o777)
+            self.assertFalse(os.path.exists(self.token_file))
+
+            # Private, but not ours: leave the mode alone and still store the token.
+            os.chmod(parent, 0o755)
+            with mock.patch("keyforge.auth.os.stat", foreign_stat):
+                self._login(token)
+            self.assertEqual(stat.S_IMODE(os.stat(parent).st_mode), 0o755)
+            self.assertEqual(stat.S_IMODE(os.stat(self.token_file).st_mode), 0o600)
+            self.assertEqual(auth.load_principal().sub, "auth0|alice")
+        finally:
+            os.chmod(parent, 0o700)
+
+    def test_home_token_directory_is_not_tightened(self):
+        token = self.sign(self.payload())
+        home = self.d.name
+        saved_home = os.environ.get("HOME")
+        os.environ["HOME"] = home
+        try:
+            # A directory under $HOME is still tightened. $HOME itself is not.
+            nested = os.path.join(home, ".keyforge")
+            os.mkdir(nested)
+            os.chmod(nested, 0o755)
+            os.chmod(home, 0o755)
+            os.environ["KEYFORGE_TOKEN_FILE"] = os.path.join(nested, "tokens.json")
+            self._login(token)
+            self.assertEqual(stat.S_IMODE(os.stat(nested).st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(os.stat(home).st_mode), 0o755)
+
+            # A token file directly in $HOME: do not chmod $HOME when it is already private.
+            os.environ["KEYFORGE_TOKEN_FILE"] = os.path.join(home, "tokens.json")
+            self._login(token)
+            self.assertEqual(stat.S_IMODE(os.stat(home).st_mode), 0o755)
+            self.assertEqual(stat.S_IMODE(os.stat(self.token_file).st_mode), 0o600)
+
+            # A group- or world-writable $HOME is refused instead of being chmodded.
+            os.remove(self.token_file)
+            os.chmod(home, 0o777)
+            with self.assertRaises(AuthError) as cm:
+                self._login(token)
+            message = str(cm.exception)
+            self.assertIn(f"token directory {home} must be private", message)
+            self.assertIn("chmod 700 or set KEYFORGE_TOKEN_FILE", message)
+            self.assertNotIn(token, message)
+            self.assertEqual(stat.S_IMODE(os.stat(home).st_mode), 0o777)
+            self.assertFalse(os.path.exists(self.token_file))
+        finally:
+            if saved_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = saved_home
+            os.chmod(home, 0o700)
+            os.environ["KEYFORGE_TOKEN_FILE"] = self.token_file
+
+    def test_token_directory_chmod_oserror_is_autherror(self):
+        token = self.sign(self.payload())
+        os.chmod(self.d.name, 0o755)
+        try:
+            with mock.patch("keyforge.auth.os.chmod", side_effect=PermissionError(13, "Permission denied")):
+                with self.assertRaises(AuthError) as cm:
+                    self._login(token)
+            message = str(cm.exception)
+            self.assertIn(f"token directory {self.d.name} could not be made private", message)
+            self.assertIn("Permission denied", message)
+            self.assertNotIn(token, message)
+            self.assertFalse(os.path.exists(self.token_file))
+            self.assertEqual(stat.S_IMODE(os.stat(self.d.name).st_mode), 0o755)
+        finally:
+            os.chmod(self.d.name, 0o700)
+
+    def test_token_directory_stat_oserror_is_autherror(self):
+        with mock.patch("keyforge.auth.os.stat", side_effect=OSError(13, "Permission denied")):
+            with self.assertRaises(AuthError) as cm:
+                auth._tighten_token_dir(Path(self.d.name))
+        self.assertIn("token directory unusable", str(cm.exception))
+        self.assertIn("Permission denied", str(cm.exception))
+
+    def test_logout_overwrites_token_before_unlink(self):
+        token = self.sign(self.payload())
+        self._login(token)
+        before = Path(self.token_file).read_bytes()
+        self.assertIn(b"refresh-opaque", before)
+        self.assertIn(token.encode(), before)
+        seen = {}
+        real_remove = os.remove
+
+        def spy(path):
+            seen["data"] = Path(path).read_bytes()
+            return real_remove(path)
+
+        with mock.patch("keyforge.auth.os.remove", spy):
+            auth.logout()
+        self.assertEqual(seen["data"], b"\0" * len(before))
+        self.assertNotIn(b"refresh-opaque", seen["data"])
+        self.assertNotIn(token.encode(), seen["data"])
+        self.assertFalse(os.path.exists(self.token_file))
+        auth.logout()
+
+        # A failed wipe must not fail logout or leave the file behind.
+        self._login(token)
+        with mock.patch("keyforge.auth.os.open", side_effect=OSError("wipe failed")):
+            auth.logout()
+        self.assertFalse(os.path.exists(self.token_file))
+
+        # Overwrite must not follow a symlink and destroy the target.
+        target = os.path.join(self.d.name, "real.json")
+        Path(target).write_text("KEEP-SECRET")
+        os.chmod(target, 0o600)
+        os.symlink(target, self.token_file)
+        auth.logout()
+        self.assertFalse(os.path.lexists(self.token_file))
+        self.assertEqual(Path(target).read_text(), "KEEP-SECRET")
+
+    def test_load_reports_unreadable_token_directory(self):
+        self._login(self.sign(self.payload()))
+        with mock.patch("keyforge.auth.os.stat", side_effect=OSError(13, "Permission denied")):
+            with self.assertRaises(AuthError) as cm:
+                auth.load_principal()
+        self.assertIn("token directory unusable", str(cm.exception))
+        self.assertIn("Permission denied", str(cm.exception))
+        self.assertNotIn("access_token", str(cm.exception))
+
+    def test_logout_skips_wipe_when_descriptor_is_not_regular(self):
+        self._login(self.sign(self.payload()))
+        real_fstat = os.fstat
+
+        def fake_fstat(fd):
+            st = real_fstat(fd)
+            return os.stat_result((stat.S_IFIFO | 0o600,) + tuple(st)[1:])
+
+        with mock.patch("keyforge.auth.os.fstat", fake_fstat):
+            auth.logout()
+        self.assertFalse(os.path.exists(self.token_file))
+
+    def test_logout_unlinks_after_short_wipe_write(self):
+        self._login(self.sign(self.payload()))
+        with mock.patch("keyforge.auth.os.write", return_value=0):
+            auth.logout()
+        self.assertFalse(os.path.exists(self.token_file))
 
     def test_command_gates_exempt_policy_and_expiry(self):
         gates = {

@@ -5,7 +5,7 @@ The envelopes below were produced by the current ``memory_provider`` and
 a later refactor has to decrypt these bytes, not replace them with a fresh wrap.
 PKCS#11 is stubbed in-process so the suite does not need SoftHSM.
 """
-import io, json, logging, os, sys, traceback, unittest
+import io, json, logging, os, subprocess, sys, traceback, unittest
 from contextlib import redirect_stderr
 from unittest import mock
 
@@ -68,6 +68,13 @@ class PinIncorrect(Exception):
     """Name matches ``kms._pin_mismatch`` (it checks the class name only)."""
 
 
+class _QuietError(Exception):
+    """``str`` hides args, so a PIN on the chain or in a bytes arg is not in the message."""
+
+    def __str__(self):
+        return "token failure"
+
+
 def _dek_aad(key_id):
     return f"keyforge-dek-v1|{key_id}".encode()
 
@@ -102,6 +109,8 @@ class _Session:
 
     def close(self):
         self._token.closed += 1
+        if self._token.close_error is not None:
+            raise self._token.close_error
 
     def get_objects(self, template):
         label = template.get("LABEL")
@@ -133,6 +142,7 @@ class _Token:
         self.encrypt_error = None
         self.decrypt_error = None
         self.closed = 0
+        self.close_error = None
 
     def seed(self, label, n=1):
         for _ in range(n):
@@ -217,7 +227,9 @@ class _EnvCase(unittest.TestCase):
         self._saved_env = {name: os.environ.get(name) for name in _ENV_KEYS}
         for name in _ENV_KEYS:
             os.environ.pop(name, None)
+        kms._user_pin = None
         self.addCleanup(self._restore_env)
+        self.addCleanup(setattr, kms, "_user_pin", None)
 
     def _restore_env(self):
         for name, value in self._saved_env.items():
@@ -439,6 +451,87 @@ class PinRedactionTests(_EnvCase):
         detail = _safe_exc(RuntimeError("token offline"), PIN)
         self.assertEqual(detail, "RuntimeError: token offline")
         self.assertNotIn(PIN, detail)
+        # An empty PIN is not a wildcard. It must not wipe the message.
+        self.assertEqual(_safe_exc(RuntimeError("token offline"), ""), "RuntimeError: token offline")
+        long = _safe_exc(RuntimeError("n" * 500), PIN)
+        self.assertEqual(long, ("RuntimeError: " + "n" * 500)[:200])
+
+    def assertSecretGone(self, pin, *blobs, exc=None):
+        folded = pin.casefold()
+        if exc is not None:
+            rendered = "".join(traceback.format_exception(exc))
+            blobs = blobs + (str(exc), repr(exc), rendered)
+            self.assertIsNone(exc.__cause__)
+            context = exc.__context__
+            if context is not None:
+                blobs = blobs + (
+                    str(context), repr(context), "".join(traceback.format_exception(context)),
+                )
+        for blob in blobs:
+            self.assertNotIn(folded, blob.casefold())
+
+    def test_safe_exc_redacts_case_variants(self):
+        detail = _safe_exc(RuntimeError("token said SECRET"), "secret")
+        self.assertEqual(detail, "RuntimeError: token said [redacted]")
+        mixed = _safe_exc(RuntimeError("SeCrEt/SECRET/secret"), "secret")
+        self.assertEqual(mixed, "RuntimeError: [redacted]/[redacted]/[redacted]")
+        self.assertSecretGone("secret", detail, mixed)
+        # ß casefolds to "ss", so the whole word is one match, not two letters.
+        sharp = _safe_exc(RuntimeError("pass STRASSE word"), "straße")
+        self.assertEqual(sharp, "RuntimeError: pass [redacted] word")
+        self.assertSecretGone("straße", sharp)
+        self.assertSecretGone("strasse", sharp)
+
+    def test_safe_exc_redacts_overlapping_and_repeated_pins(self):
+        # A non-overlapping replace leaves the tail of "aaaa" ("[redacted]a").
+        detail = _safe_exc(RuntimeError("aaaa"), "aaa")
+        self.assertEqual(detail, "RuntimeError: [redacted]")
+        self.assertSecretGone("aaa", detail)
+        repeated = _safe_exc(RuntimeError("aaa aaa"), "aaa")
+        self.assertEqual(repeated, "RuntimeError: [redacted] [redacted]")
+        self.assertSecretGone("aaa", repeated)
+        mixed = _safe_exc(RuntimeError("AaAa"), "aaa")
+        self.assertEqual(mixed, "RuntimeError: [redacted]")
+        self.assertSecretGone("aaa", mixed)
+        separated = _safe_exc(RuntimeError("aaaXaaa"), "aaa")
+        self.assertEqual(separated, "RuntimeError: [redacted]X[redacted]")
+        self.assertSecretGone("aaa", separated)
+
+    def test_safe_exc_pin_substring_of_placeholder_is_removed(self):
+        # "red" is inside "[redacted]", so that marker would put the PIN back.
+        detail = _safe_exc(RuntimeError("bad red pin"), "red")
+        self.assertTrue(detail.startswith("RuntimeError:"))
+        self.assertSecretGone("red", detail)
+        self.assertNotIn("[redacted]", detail.casefold())
+        for pin in ("red", "act", "e", "[redacted]", "Red"):
+            text = f"before {pin} middle {pin.swapcase()} after"
+            redacted = _safe_exc(RuntimeError(text), pin)
+            self.assertLessEqual(len(redacted), 200)
+            self.assertSecretGone(pin, redacted)
+            if pin.casefold() in "[redacted]":
+                self.assertNotIn("[redacted]", redacted.casefold())
+        # The marker itself does not contain the PIN, but the join recreates it:
+        # "zz[r" -> "z[redacted]" still starts with "z[r".
+        joined = _safe_exc(RuntimeError("zz[r"), "z[r")
+        self.assertSecretGone("z[r", joined)
+
+    def test_safe_exc_truncation_boundary_does_not_reveal_pin(self):
+        # PIN starts inside the 200-character window. A different case means a
+        # case-sensitive replace after the cut would keep the prefix.
+        filler = "m" * 172
+        detail = _safe_exc(RuntimeError(filler + PIN.upper() + "TAIL"), PIN)
+        self.assertTrue(detail.startswith("RuntimeError:"))
+        self.assertLessEqual(len(detail), 200)
+        self.assertIn("[redacted]", detail)
+        self.assertSecretGone(PIN, detail)
+        self.assertNotIn(PIN[:8].upper(), detail)
+        self.assertNotIn(PIN[:8], detail.lower())
+        # "red" sits where a "[redacted]" marker would be sliced to "[red".
+        hostile = "x" * 182
+        sliced = _safe_exc(RuntimeError(hostile + "red" + "TAIL"), "red")
+        self.assertLessEqual(len(sliced), 200)
+        self.assertSecretGone("red", sliced)
+        self.assertNotIn("[red", sliced.lower())
 
     def test_read_user_pin_does_not_log_the_pin(self):
         answers = iter(["", PIN])
@@ -446,6 +539,8 @@ class PinRedactionTests(_EnvCase):
 
         def read_secret(prompt):
             prompts.append(prompt)
+            if len(prompts) == 1:
+                self.assertIsNone(kms._user_pin)
             return next(answers)
 
         err = io.StringIO()
@@ -454,7 +549,8 @@ class PinRedactionTests(_EnvCase):
             got = read_user_pin(read_secret)
         self.assertEqual(got, PIN)
         self.assertEqual(prompts, ["KEYFORGE_PKCS11_PIN: ", "KEYFORGE_PKCS11_PIN: "])
-        self.assertEqual(os.environ.get("KEYFORGE_PKCS11_PIN"), PIN)
+        self.assertIsNone(os.environ.get("KEYFORGE_PKCS11_PIN"))
+        self.assertEqual(kms._user_pin, PIN)
         self.assertIn("input blank", err.getvalue())
         self.assertPinHidden(PIN, err.getvalue(), "\n".join(logs), "\n".join(prompts))
 
@@ -612,6 +708,162 @@ class PinRedactionTests(_EnvCase):
         self.assertIn("[redacted]", str(cm.exception))
         self.assertPinHidden(PIN, "\n".join(logs), exc=cm.exception)
 
+    def test_confirm_user_pin_close_failure_hides_pin(self):
+        stub = _Token()
+        _install_pkcs11(self, stub)
+        # Unrelated close errors still propagate with their original text.
+        stub.close_error = RuntimeError("token removed")
+        with self.assertRaises(RuntimeError) as cm:
+            confirm_user_pin(__file__, "keyforge", PIN)
+        self.assertEqual(str(cm.exception), "token removed")
+        self.assertEqual(stub.closed, 1)
+
+        # Case variation, a repeated copy, and a PIN that sits inside "[redacted]".
+        pin = "red"
+        stub.closed = 0
+        stub.close_error = RuntimeError(f"C_Close {pin.upper()} {pin}{pin}")
+        logs = self._capture_logs()
+        err = io.StringIO()
+        with redirect_stderr(err):
+            with self.assertRaises(KeyForgeError) as cm:
+                confirm_user_pin(__file__, "keyforge", pin)
+        self.assertIn("PKCS#11 session close failed", str(cm.exception))
+        self.assertIn("RuntimeError:", str(cm.exception))
+        self.assertNotIn("[redacted]", str(cm.exception).casefold())
+        self.assertIsNone(cm.exception.__context__)
+        self.assertSecretGone(pin, err.getvalue(), "\n".join(logs), exc=cm.exception)
+        self.assertEqual(stub.closed, 1)
+
+    def test_open_token_hides_non_mismatch_errors(self):
+        from keyforge.kms import _open_token
+
+        pin = "aaa"
+
+        class Token:
+            def open(self, rw, user_pin):
+                raise RuntimeError(f"C_Login {user_pin.upper()} aaaa {user_pin}")
+
+        logs = self._capture_logs()
+        err = io.StringIO()
+        with redirect_stderr(err):
+            with self.assertRaises(RuntimeError) as cm:
+                _open_token(Token(), pin)
+        self.assertIsNone(cm.exception.__context__)
+        self.assertNotIn("aaaa", str(cm.exception))
+        self.assertSecretGone(pin, err.getvalue(), "\n".join(logs), exc=cm.exception)
+
+        # _session re-raises KeyForgeError without _safe_exc, so _open_token
+        # has to redact before that exception leaves.
+        class KeyForgeToken:
+            def open(self, rw, user_pin):
+                raise KeyForgeError(f"slot {user_pin} RED {user_pin.upper()}")
+
+        hostile = "red"
+        with self.assertRaises(KeyForgeError) as cm:
+            _open_token(KeyForgeToken(), hostile)
+        self.assertNotIn("PKCS#11 login failed", str(cm.exception))
+        self.assertIsNone(cm.exception.__context__)
+        self.assertSecretGone(hostile, exc=cm.exception)
+        self.assertNotIn("[redacted]", str(cm.exception).casefold())
+
+        stub = _Token()
+        _install_pkcs11(self, stub)
+        stub.open_error = KeyForgeError(f"slot {hostile} RED")
+        tok = Pkcs11Token(__file__, "keyforge", hostile, "keyforge-kek")
+        with self.assertRaises(KeyForgeError) as cm:
+            tok._session()
+        self.assertIsNone(cm.exception.__cause__)
+        self.assertSecretGone(hostile, exc=cm.exception)
+        if cm.exception.__context__ is not None:
+            self.assertSecretGone(hostile, exc=cm.exception.__context__)
+
+    def _assert_raised_chain_is_clean(self, exc):
+        self.assertIsNone(exc.__cause__)
+        self.assertIsNone(exc.__context__)
+        self.assertSecretGone(PIN, exc=exc)
+
+    def test_cause_context_and_bytes_pins_are_not_reraised(self):
+        from keyforge.kms import _mentions_pin, _open_token
+
+        def with_cause(pin):
+            err = _QuietError("token failure")
+            err.__cause__ = RuntimeError(f"inner {pin}")
+            return err
+
+        def with_context(pin):
+            err = _QuietError("token failure")
+            err.__context__ = RuntimeError(f"inner {pin}")
+            err.__suppress_context__ = False
+            return err
+
+        def with_bytes(pin):
+            err = _QuietError("token failure")
+            err.args = (f"inner {pin}".encode(),)
+            return err
+
+        def with_cycle(pin):
+            err = _QuietError("token failure")
+            inner = RuntimeError(f"inner {pin}")
+            err.__cause__ = inner
+            inner.__cause__ = err
+            inner.__context__ = err
+            return err
+
+        # A cycle must terminate, and a clean chain must not count as a hit.
+        self.assertTrue(_mentions_pin(with_cause(PIN), PIN))
+        self.assertTrue(_mentions_pin(with_context(PIN), PIN))
+        self.assertTrue(_mentions_pin(with_bytes(PIN), PIN))
+        self.assertTrue(_mentions_pin(with_cycle(PIN), PIN))
+        clean = RuntimeError("token removed")
+        other = RuntimeError("offline")
+        clean.__cause__ = other
+        other.__context__ = clean
+        self.assertFalse(_mentions_pin(clean, PIN))
+
+        stub = _Token()
+        _install_pkcs11(self, stub)
+        for label, factory in (
+            ("cause", with_cause),
+            ("context", with_context),
+            ("bytes", with_bytes),
+            ("cycle", with_cycle),
+        ):
+            with self.subTest(path="open", leak=label):
+                class Token:
+                    def open(self, rw, user_pin, built=factory):
+                        raise built(user_pin)
+
+                with self.assertRaises(_QuietError) as cm:
+                    _open_token(Token(), PIN)
+                self.assertEqual(str(cm.exception), "token failure")
+                self._assert_raised_chain_is_clean(cm.exception)
+
+            with self.subTest(path="close", leak=label):
+                stub.close_error = factory(PIN)
+                with self.assertRaises(KeyForgeError) as cm:
+                    confirm_user_pin(__file__, "keyforge", PIN)
+                self.assertIn("PKCS#11 session close failed", str(cm.exception))
+                self._assert_raised_chain_is_clean(cm.exception)
+
+        # A chain that does not contain the PIN is still the original error.
+        kept = RuntimeError("token removed")
+        kept.__cause__ = RuntimeError("offline")
+
+        class CleanToken:
+            def open(self, rw, user_pin):
+                raise kept
+
+        with self.assertRaises(RuntimeError) as cm:
+            _open_token(CleanToken(), PIN)
+        self.assertIs(cm.exception, kept)
+        self.assertEqual(str(cm.exception.__cause__), "offline")
+
+        stub.close_error = kept
+        with self.assertRaises(RuntimeError) as cm:
+            confirm_user_pin(__file__, "keyforge", PIN)
+        self.assertIs(cm.exception, kept)
+        self.assertEqual(str(cm.exception.__cause__), "offline")
+
     def test_pkcs11_from_env_prompt_does_not_log_pin(self):
         os.environ["KEYFORGE_PKCS11_MODULE"] = __file__
         os.environ["KEYFORGE_PKCS11_TOKEN"] = "keyforge"
@@ -630,7 +882,9 @@ class PinRedactionTests(_EnvCase):
              redirect_stderr(err):
             prov = pkcs11_from_env()
         self.assertIn("input blank", err.getvalue())
-        self.assertEqual(os.environ.get("KEYFORGE_PKCS11_PIN"), PIN)
+        self.assertIsNone(os.environ.get("KEYFORGE_PKCS11_PIN"))
+        self.assertEqual(kms._user_pin, PIN)
+        self.assertEqual(prov.token._pin, PIN)
         self.assertPinHidden(PIN, err.getvalue(), "\n".join(logs), repr(prov), repr(prov.token))
 
     def test_status_hides_pin_on_failure_and_success(self):
@@ -721,6 +975,197 @@ class PinRedactionTests(_EnvCase):
         joined = err.getvalue() + "\n" + "\n".join(logs)
         self.assertPinHidden(PIN, joined)
         self.assertPinHidden(WRONG_PIN, joined)
+
+
+class PinCacheTests(_EnvCase):
+    def _configure(self):
+        os.environ["KEYFORGE_KMS_PROVIDER"] = "pkcs11"
+        os.environ["KEYFORGE_PKCS11_MODULE"] = __file__
+        os.environ["KEYFORGE_PKCS11_TOKEN"] = "keyforge"
+        os.environ["KEYFORGE_PKCS11_KEY_LABEL"] = "keyforge-kek"
+
+    def _child_env_pin(self):
+        script = (
+            "import os\n"
+            "value = os.environ.get('KEYFORGE_PKCS11_PIN')\n"
+            "print('' if value is None else value)\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, check=True,
+        )
+        self.assertNotIn(PIN, proc.stderr)
+        return proc.stdout.strip()
+
+    def test_prompt_never_sets_environ(self):
+        os.environ["KEYFORGE_PKCS11_PIN"] = "env-pin"
+        got = read_user_pin(lambda _prompt: PIN)
+        self.assertEqual(got, PIN)
+        self.assertEqual(kms._user_pin, PIN)
+        self.assertEqual(os.environ.get("KEYFORGE_PKCS11_PIN"), "env-pin")
+        self.assertNotIn(PIN, os.environ.values())
+
+        os.environ.pop("KEYFORGE_PKCS11_PIN", None)
+        read_user_pin(lambda _prompt: PIN)
+        self.assertIsNone(os.environ.get("KEYFORGE_PKCS11_PIN"))
+        self.assertEqual(kms._user_pin, PIN)
+
+    def test_resolution_uses_argument_then_cache_then_env(self):
+        self._configure()
+        kms._user_pin = "cached-pin"
+        os.environ["KEYFORGE_PKCS11_PIN"] = "env-pin"
+        with mock.patch("getpass.getpass", side_effect=AssertionError("prompted")):
+            explicit = pkcs11_from_env("explicit-pin")
+        self.assertEqual(explicit.token._pin, "explicit-pin")
+        self.assertEqual(kms._user_pin, "cached-pin")
+        self.assertEqual(os.environ.get("KEYFORGE_PKCS11_PIN"), "env-pin")
+
+        with mock.patch("getpass.getpass", side_effect=AssertionError("prompted")):
+            cached = pkcs11_from_env()
+        self.assertEqual(cached.token._pin, "cached-pin")
+
+        kms._user_pin = None
+        with mock.patch("getpass.getpass", side_effect=AssertionError("prompted")):
+            from_env = pkcs11_from_env()
+        self.assertEqual(from_env.token._pin, "env-pin")
+        self.assertIsNone(kms._user_pin)
+
+    def test_status_prompts_only_once(self):
+        self._configure()
+        calls = []
+
+        def fake(prompt):
+            calls.append(prompt)
+            return PIN
+
+        with mock.patch("sys.stdin.isatty", return_value=True), \
+             mock.patch("getpass.getpass", side_effect=fake), \
+             redirect_stderr(io.StringIO()):
+            first = kms.status()
+            pkcs11_from_env()
+            second = kms.status()
+        self.assertEqual(calls, ["KEYFORGE_PKCS11_PIN: "])
+        self.assertTrue(first["pin_set"])
+        self.assertTrue(second["pin_set"])
+        self.assertIsNone(os.environ.get("KEYFORGE_PKCS11_PIN"))
+        self.assertEqual(kms._user_pin, PIN)
+        rendered = str(first) + str(second) + "\n".join(kms.format_status(first))
+        self.assertNotIn(PIN, rendered)
+
+        with mock.patch("sys.stdin.isatty", return_value=False), \
+             mock.patch("getpass.getpass", side_effect=AssertionError("prompted")):
+            later = kms.status()
+        self.assertTrue(later["pin_set"])
+        self.assertNotEqual(kms.format_status(later), ["no terminal"])
+        self.assertNotIn(PIN, str(later))
+
+    def test_wrong_pin_retry_updates_cache_and_token_pin(self):
+        stub = _Token()
+        stub.accept_pin = PIN
+        _install_pkcs11(self, stub)
+        tok = Pkcs11Token(__file__, "keyforge", WRONG_PIN, "keyforge-kek")
+        calls = []
+
+        def fake(prompt):
+            calls.append(prompt)
+            return PIN
+
+        err = io.StringIO()
+        with mock.patch("sys.stdin.isatty", return_value=True), \
+             mock.patch("getpass.getpass", side_effect=fake), \
+             redirect_stderr(err):
+            session = tok._session()
+        self.assertIsNotNone(session)
+        self.assertEqual(calls, ["KEYFORGE_PKCS11_PIN: "])
+        self.assertEqual(tok._pin, PIN)
+        self.assertEqual(kms._user_pin, PIN)
+        self.assertIsNone(os.environ.get("KEYFORGE_PKCS11_PIN"))
+        self.assertNotIn(PIN, err.getvalue())
+        self.assertNotIn(WRONG_PIN, err.getvalue())
+
+        calls.clear()
+        with mock.patch("sys.stdin.isatty", return_value=True), \
+             mock.patch("getpass.getpass", side_effect=fake), \
+             redirect_stderr(io.StringIO()):
+            again = tok._session()
+        self.assertIsNotNone(again)
+        self.assertEqual(calls, [])
+        self.assertEqual(stub.pins, [WRONG_PIN, PIN, PIN])
+
+        os.environ["KEYFORGE_PKCS11_PIN"] = WRONG_PIN
+        self._configure()
+        with mock.patch("getpass.getpass", side_effect=AssertionError("prompted")):
+            prov = pkcs11_from_env()
+        self.assertEqual(prov.token._pin, PIN)
+        self.assertEqual(os.environ.get("KEYFORGE_PKCS11_PIN"), WRONG_PIN)
+        self.assertNotIn(PIN, os.environ.values())
+
+    def _rejecting_token(self):
+        class Token:
+            def open(self, rw, user_pin):
+                raise PinIncorrect(user_pin)
+
+        return Token()
+
+    def test_wrong_pin_then_ctrl_c_does_not_keep_the_cache(self):
+        from keyforge.kms import _open_token
+
+        os.environ["KEYFORGE_PKCS11_PIN"] = PIN
+        self._configure()
+        answers = iter(["typed-wrong"])
+
+        def read_secret(_prompt):
+            try:
+                return next(answers)
+            except StopIteration:
+                raise KeyboardInterrupt
+
+        with mock.patch("sys.stdin.isatty", return_value=True), \
+             redirect_stderr(io.StringIO()):
+            with self.assertRaises(KeyboardInterrupt):
+                _open_token(self._rejecting_token(), WRONG_PIN, read_secret=read_secret)
+        self.assertIsNone(kms._user_pin)
+        self.assertEqual(os.environ.get("KEYFORGE_PKCS11_PIN"), PIN)
+
+    def test_wrong_pin_without_a_tty_does_not_keep_the_cache(self):
+        from keyforge.kms import _open_token
+
+        os.environ["KEYFORGE_PKCS11_PIN"] = PIN
+        read_user_pin(lambda _prompt: "typed-wrong")
+        self.assertEqual(kms._user_pin, "typed-wrong")
+        with mock.patch("sys.stdin.isatty", return_value=False), \
+             redirect_stderr(io.StringIO()):
+            with self.assertRaises(KeyForgeError) as cm:
+                _open_token(self._rejecting_token(), "typed-wrong", read_secret=lambda _p: "unused")
+        self.assertEqual(str(cm.exception), "no terminal")
+        self.assertIsNone(kms._user_pin)
+        self.assertEqual(os.environ.get("KEYFORGE_PKCS11_PIN"), PIN)
+
+    def test_aborted_wrong_pin_does_not_override_the_env_pin(self):
+        from keyforge.kms import _open_token
+
+        os.environ["KEYFORGE_PKCS11_PIN"] = PIN
+        self._configure()
+        read_user_pin(lambda _prompt: "typed-wrong")
+        with mock.patch("sys.stdin.isatty", return_value=False), \
+             redirect_stderr(io.StringIO()):
+            with self.assertRaises(KeyForgeError):
+                _open_token(self._rejecting_token(), kms._user_pin, read_secret=lambda _p: "unused")
+        with mock.patch("getpass.getpass", side_effect=AssertionError("prompted")):
+            prov = pkcs11_from_env()
+        self.assertEqual(prov.token._pin, PIN)
+        self.assertIsNone(kms._user_pin)
+        self.assertNotIn("typed-wrong", os.environ.values())
+
+    def test_prompted_pin_does_not_reach_child_processes(self):
+        os.environ["KEYFORGE_PKCS11_PIN"] = "env-pin"
+        read_user_pin(lambda _prompt: PIN)
+        self.assertEqual(self._child_env_pin(), "env-pin")
+
+        os.environ.pop("KEYFORGE_PKCS11_PIN", None)
+        read_user_pin(lambda _prompt: PIN)
+        self.assertEqual(self._child_env_pin(), "")
+        self.assertIsNone(os.environ.get("KEYFORGE_PKCS11_PIN"))
 
 
 if __name__ == "__main__":
