@@ -231,11 +231,16 @@ def _create_token(read_secret, echo, conf: str, module: str) -> str:
 
 
 def _kms_status_lines(saved: dict[str, str]) -> list[str]:
-    """``keyforge kms status`` lines for the provider just configured."""
+    """``keyforge kms status`` lines for the provider just configured.
+
+    The PIN is passed in. Status must not depend on a prompt having copied it
+    into the environment, and a PIN already cached in this process must not
+    hide the one setup just collected.
+    """
     previous = {key: os.environ.get(key) for key in saved}
     os.environ.update(saved)
     try:
-        return format_status(kms_status())
+        return format_status(kms_status(pin=saved.get("KEYFORGE_PKCS11_PIN") or None))
     finally:
         for key, old in previous.items():
             if old is None:
