@@ -30,7 +30,7 @@ class SoftHsmTests(unittest.TestCase):
         Path(conf).write_text(
             f"directories.tokendir = {tokendir}\nobjectstore.backend = file\nlog.level = ERROR\n"
         )
-        kms._user_pin = None
+        kms.pkcs11._user_pin = None
         self._saved = {k: os.environ.get(k) for k in (
             "SOFTHSM2_CONF", "KEYFORGE_KMS_PROVIDER", "KEYFORGE_PKCS11_MODULE",
             "KEYFORGE_PKCS11_TOKEN", "KEYFORGE_PKCS11_PIN", "KEYFORGE_PKCS11_KEY_LABEL",
@@ -49,7 +49,7 @@ class SoftHsmTests(unittest.TestCase):
         self.store = Store(os.path.join(self.d.name, "store.json"))
 
     def tearDown(self):
-        kms._user_pin = None
+        kms.pkcs11._user_pin = None
         for k, v in self._saved.items():
             if v is None:
                 os.environ.pop(k, None)
@@ -88,10 +88,10 @@ class SoftHsmTests(unittest.TestCase):
 
 class PinAttemptTests(unittest.TestCase):
     def setUp(self):
-        kms._user_pin = None
+        kms.pkcs11._user_pin = None
 
     def tearDown(self):
-        kms._user_pin = None
+        kms.pkcs11._user_pin = None
 
     def test_wrong_pin_retries_until_correct(self):
         from keyforge.kms import _open_token
@@ -134,10 +134,10 @@ class NewAesKeyNoticeTests(unittest.TestCase):
 
 class Pkcs11ConfigTests(unittest.TestCase):
     def setUp(self):
-        kms._user_pin = None
+        kms.pkcs11._user_pin = None
 
     def tearDown(self):
-        kms._user_pin = None
+        kms.pkcs11._user_pin = None
 
     def test_missing_env_is_explicit(self):
         saved = os.environ.get("KEYFORGE_KMS_PROVIDER")

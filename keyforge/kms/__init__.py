@@ -20,7 +20,7 @@ real session. Both expose ``wrap`` / ``unwrap`` and ``Pkcs11Kms`` does not
 care which one it holds.
 """
 from __future__ import annotations
-import os, secrets, sys, types
+import os, secrets
 from ..errors import KeyForgeError
 
 _PROVIDERS = ("local", "memory", "pkcs11")
@@ -32,11 +32,11 @@ from .local import (
 from .pkcs11 import (
     Pkcs11Kms, Pkcs11Token, _REDACTED, _REDACTED_ALT, _barrier_placeholder, _contains_pin,
     _drop_chain, _exception_blob, _exception_without_pin, _iter_exception_chain, _mentions_pin,
-    _new_aes_key_notice, _open_token, _pin_mismatch, _pin_spans, _placeholder_for, _redact_pin,
-    _replace_pin, _resolve_user_pin, _safe_exc, confirm_user_pin, destroy_aes_labels,
-    list_aes_labels, pkcs11_from_env, read_user_pin,
+    _new_aes_key_notice, _NoTerminal, _open_token, _pin_mismatch, _pin_spans, _placeholder_for,
+    _redact_pin, _replace_pin, _resolve_user_pin, _safe_exc, confirm_user_pin,
+    destroy_aes_labels, list_aes_labels, pkcs11_from_env, read_user_pin,
 )
-from .status import _NoTerminal, status
+from .status import status
 
 
 class FakePkcs11Token:
@@ -126,42 +126,3 @@ def format_status(info: dict) -> list[str]:
     if info.get("note"):
         lines.append(f"note: {info['note']}")
     return lines
-
-
-class _UserPin:
-    """The process PIN cache lives on ``pkcs11._user_pin`` and nowhere else.
-
-    ``keyforge.kms._user_pin`` is this descriptor, so assignments and
-    ``mock.patch`` on the package hit that one global. ``mock.patch`` treats a
-    name that is not in the module dict as non-local and ``delattr``s it on
-    the way out, then writes the saved value back if the name looks missing.
-    ``__delete__`` hides the descriptor for that instant so the saved value is
-    restored onto ``pkcs11._user_pin``.
-    """
-
-    def __init__(self) -> None:
-        self._hidden = False
-
-    def __get__(self, obj, objtype=None):
-        if obj is None:
-            return self
-        if self._hidden:
-            raise AttributeError("_user_pin")
-        return sys.modules[__name__ + ".pkcs11"]._user_pin
-
-    def __set__(self, obj, value):
-        self._hidden = False
-        sys.modules[__name__ + ".pkcs11"]._user_pin = value
-
-    def __delete__(self, obj):
-        self._hidden = True
-
-
-class _KmsModule(types.ModuleType):
-    _user_pin = _UserPin()
-
-    def __dir__(self):
-        return sorted(set(super().__dir__()) | {"_user_pin"})
-
-
-sys.modules[__name__].__class__ = _KmsModule

@@ -514,6 +514,14 @@ def read_user_pin(read_secret=None) -> str:
             return pin
         print("input blank", file=sys.stderr)
 
+
+class _NoTerminal(KeyForgeError):
+    """stdin is not a terminal, so the user PIN cannot be prompted."""
+
+    def __init__(self) -> None:
+        super().__init__("no terminal")
+
+
 def _resolve_user_pin(pin: str | None, module: str, token: str, label: str) -> str:
     """Argument, then the process cache, then ``KEYFORGE_PKCS11_PIN``, then a TTY prompt.
 
@@ -549,7 +557,3 @@ def pkcs11_from_env(pin: str | None = None) -> Pkcs11Kms:
             message += "\n" + setup_instructions(no_token=not matching_tokens("keyforge", conf))
         raise KeyForgeError(message)
     return Pkcs11Kms(Pkcs11Token(module, token, resolved, label), label)
-
-
-# status imports this module, so bind the class after _resolve_user_pin exists.
-from .status import _NoTerminal

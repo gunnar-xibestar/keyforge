@@ -18,7 +18,7 @@ def _run(*argv):
 
 class SetupTests(unittest.TestCase):
     def setUp(self):
-        kms._user_pin = None
+        kms.pkcs11._user_pin = None
         self.d = tempfile.TemporaryDirectory()
         self.env_file = os.path.join(self.d.name, "keyforge.env")
         self._saved = {k: os.environ.get(k) for k in (
@@ -37,7 +37,7 @@ class SetupTests(unittest.TestCase):
         self.seen = []
 
     def tearDown(self):
-        kms._user_pin = None
+        kms.pkcs11._user_pin = None
         for k, v in self._saved.items():
             if v is None:
                 os.environ.pop(k, None)
@@ -374,7 +374,7 @@ class SetupTests(unittest.TestCase):
             self.skipTest("python-pkcs11 is not installed")
         # A prior prompt lives only in the process cache. Setup must use the
         # PIN it just collected, not that cache and not a second prompt.
-        kms._user_pin = "prompted-pin"
+        kms.pkcs11._user_pin = "prompted-pin"
         answers = iter(["pkcs11", "", "keyforge-kek", "n"])
         secrets = iter(["pin-secret", "so-pin"])
         prompts = []
@@ -419,7 +419,7 @@ class SetupTests(unittest.TestCase):
             setup_mod.list_aes_labels = real_labels
         self.assertEqual(prompts.count("KEYFORGE_PKCS11_PIN: "), 1)
         self.assertEqual(seen, ["pin-secret"])
-        self.assertEqual(kms._user_pin, "prompted-pin")
+        self.assertEqual(kms.pkcs11._user_pin, "prompted-pin")
         self.assertEqual(os.environ.get("KEYFORGE_PKCS11_PIN"), "pin-secret")
         text = "\n".join(self.lines)
         self.assertNotIn("prompted-pin", text)

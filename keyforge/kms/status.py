@@ -4,14 +4,7 @@ from pathlib import Path
 
 from ..errors import KeyForgeError
 from . import _PROVIDERS
-from .pkcs11 import _resolve_user_pin, pkcs11_from_env
-
-
-class _NoTerminal(KeyForgeError):
-    """stdin is not a terminal, so the user PIN cannot be prompted."""
-
-    def __init__(self) -> None:
-        super().__init__("no terminal")
+from .pkcs11 import _NoTerminal, _resolve_user_pin, pkcs11_from_env
 
 
 def status(store_path: str | None = None, pin: str | None = None) -> dict:
