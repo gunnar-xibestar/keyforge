@@ -344,6 +344,20 @@ def validate_access_token(token: str, *, now: float | None = None) -> Principal:
     return Principal(sub=sub, scopes=scopes, exp=exp)
 
 
+def _require_private_token_dir(directory: Path) -> None:
+    """Reject a token file whose parent directory is group- or world-writable.
+
+    A 0600 file in a writable directory can be unlinked and replaced by someone
+    other than the owner. Readable or searchable bits alone are not a refusal.
+    """
+    try:
+        mode = os.stat(directory).st_mode
+    except OSError as e:
+        raise AuthError(f"token directory unusable: {e.strerror}")
+    if mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise AuthError("token directory must not be group/world writable (chmod 700)")
+
+
 def _read_token_file() -> dict:
     path = token_path()
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
@@ -359,6 +373,7 @@ def _read_token_file() -> dict:
             raise AuthError("token file is not a regular file")
         if st.st_mode & 0o077:
             raise AuthError("token file must not be group/world accessible (chmod 600)")
+        _require_private_token_dir(path.parent)
         raw = os.read(fd, 65536)
         if len(raw) >= 65536:
             raise AuthError("token file is overstuffed")
@@ -373,9 +388,39 @@ def _read_token_file() -> dict:
     return data
 
 
+def _is_home_dir(directory: Path) -> bool:
+    return os.path.realpath(directory) == os.path.realpath(Path.home())
+
+
+def _tighten_token_dir(parent: Path) -> None:
+    """Tighten a token directory we own. Never chmod ``$HOME`` or someone else's directory.
+
+    A group- or world-writable directory we will not chmod is refused instead,
+    so a token is not written where another user can replace it. ``mkdir``
+    leaves an existing directory's mode unchanged; this is the follow-up.
+    """
+    try:
+        st = os.stat(parent)
+    except OSError as e:
+        raise AuthError(f"token directory unusable: {e.strerror or e}")
+    if st.st_uid == os.getuid() and not _is_home_dir(parent):
+        try:
+            os.chmod(parent, 0o700)
+        except OSError as e:
+            detail = e.strerror or str(e)
+            raise AuthError(f"token directory {parent} could not be made private: {detail}")
+        return
+    if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise AuthError(
+            f"token directory {parent} must be private; chmod 700 or set KEYFORGE_TOKEN_FILE"
+        )
+
+
 def _write_token_file(principal: Principal, access_token: str, refresh_token: str | None) -> None:
     path = token_path()
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    parent = path.parent
+    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _tighten_token_dir(parent)
     body = {"version": 1, "access_token": access_token, "expires_at": principal.exp,
             "token_type": "Bearer", "scope": " ".join(sorted(principal.scopes)), "sub": principal.sub}
     if refresh_token:
@@ -539,9 +584,35 @@ def device_login(*, prompt=None, sleep=time.sleep) -> Principal:
     raise AuthError("device code expired before authorization")
 
 
-def logout() -> None:
+def _wipe_token_file(path: Path) -> None:
+    """Overwrite a regular token file in place. A symlink is not followed."""
+    flags = os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(path, flags)
     try:
-        os.remove(token_path())
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return
+        remaining = st.st_size
+        zeros = b"\0" * 65536
+        while remaining:
+            n = os.write(fd, zeros[:min(remaining, len(zeros))])
+            if n <= 0:
+                raise OSError("short write wiping token file")
+            remaining -= n
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def logout() -> None:
+    """Delete the token file. Contents are overwritten first; a failed wipe still unlinks."""
+    path = token_path()
+    try:
+        _wipe_token_file(path)
+    except OSError:
+        pass
+    try:
+        os.remove(path)
     except FileNotFoundError:
         return
 
