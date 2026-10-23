@@ -17,3 +17,6 @@ keyforge = "keyforge.cli:main"
 
 [tool.setuptools]
 packages = ["keyforge", "keyforge.kms"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

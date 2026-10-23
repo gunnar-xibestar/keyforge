@@ -15,9 +15,9 @@ Providers
   wrapping key is not exported. Requires ``python-pkcs11`` and
   ``KEYFORGE_PKCS11_MODULE``.
 
-``FakePkcs11Token`` is the test double for the token. ``Pkcs11Token`` is the
-real session. Both expose ``wrap`` / ``unwrap`` and ``Pkcs11Kms`` does not
-care which one it holds.
+``FakePkcs11Token`` lives in ``tests/fakes.py``. It is the test double for the
+token. ``Pkcs11Token`` is the real session. Both expose ``wrap`` / ``unwrap``
+and ``Pkcs11Kms`` does not care which one it holds.
 """
 from __future__ import annotations
 import os
