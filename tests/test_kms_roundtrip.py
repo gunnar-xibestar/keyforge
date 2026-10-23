@@ -997,6 +997,51 @@ class PinCacheTests(_EnvCase):
         self.assertNotIn(PIN, proc.stderr)
         return proc.stdout.strip()
 
+    def test_user_pin_cache_lives_on_one_module(self):
+        """``keyforge.kms._user_pin`` is the pkcs11 global, not a second copy.
+
+        Tests assign and ``setattr`` the package attribute, and ``mock.patch``
+        on that same target has to change the cache ``read_user_pin`` and
+        ``_resolve_user_pin`` actually read. ``Pkcs11Token`` patched on the
+        package is the class ``pkcs11_from_env`` constructs.
+        """
+        from keyforge.kms import pkcs11 as pkcs11_mod
+
+        self.assertIs(kms.Pkcs11Token, pkcs11_mod.Pkcs11Token)
+        self.assertNotIn("_user_pin", kms.__dict__)
+        self.assertIn("_user_pin", dir(kms))
+        self.assertNotIn("_memory_key", kms.__dict__)
+
+        kms._user_pin = "from-package"
+        self.assertEqual(pkcs11_mod._user_pin, "from-package")
+        self.assertNotIn("from-package", kms.__dict__.values())
+        pkcs11_mod._user_pin = "from-pkcs11"
+        self.assertEqual(kms._user_pin, "from-pkcs11")
+        setattr(kms, "_user_pin", None)
+        self.assertIsNone(pkcs11_mod._user_pin)
+
+        with mock.patch("keyforge.kms._user_pin", "patched"):
+            self.assertEqual(pkcs11_mod._user_pin, "patched")
+            self.assertEqual(kms._resolve_user_pin(None, "", "", ""), "patched")
+        self.assertIsNone(pkcs11_mod._user_pin)
+        self.assertIsNone(kms._user_pin)
+
+        with mock.patch.object(kms.Pkcs11Token, "_session", lambda self: "patched-session"):
+            token = pkcs11_mod.Pkcs11Token(__file__, "keyforge", "pin", "keyforge-kek")
+            self.assertEqual(token._session(), "patched-session")
+
+    def test_memory_key_lives_on_the_local_module(self):
+        from keyforge.kms import local as local_mod
+
+        saved = local_mod._memory_key
+        try:
+            local_mod._memory_key = None
+            prov = memory_provider()
+            self.assertIs(prov._key, local_mod._memory_key)
+            self.assertNotIn("_memory_key", kms.__dict__)
+        finally:
+            local_mod._memory_key = saved
+
     def test_prompt_never_sets_environ(self):
         os.environ["KEYFORGE_PKCS11_PIN"] = "env-pin"
         got = read_user_pin(lambda _prompt: PIN)
