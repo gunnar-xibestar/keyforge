@@ -16,4 +16,4 @@ dependencies = [
 keyforge = "keyforge.cli:main"
 
 [tool.setuptools]
-packages = ["keyforge"]
+packages = ["keyforge", "keyforge.kms"]
