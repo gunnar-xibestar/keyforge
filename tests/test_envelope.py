@@ -4,8 +4,9 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from keyforge import cli, crypto, service as svc
 from keyforge.errors import KeyForgeError, ValidationError
-from keyforge.kms import FakePkcs11Token, LocalKms, Pkcs11Kms, provider_for
+from keyforge.kms import LocalKms, Pkcs11Kms, provider_for
 from keyforge.store import Store
+from tests.fakes import FakePkcs11Token
 
 os.environ.setdefault("KEYFORGE_PBKDF2_ITERS", "1000")
 

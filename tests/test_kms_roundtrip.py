@@ -15,9 +15,10 @@ from keyforge import crypto
 from keyforge import kms
 from keyforge.errors import KeyForgeError
 from keyforge.kms import (
-    FakePkcs11Token, Pkcs11Kms, Pkcs11Token, _safe_exc, confirm_user_pin,
+    Pkcs11Kms, Pkcs11Token, _safe_exc, confirm_user_pin,
     memory_provider, pkcs11_from_env, read_user_pin,
 )
+from tests.fakes import FakePkcs11Token
 
 # Recorded ciphertext. Do not regenerate.
 MEMORY_KEY_HEX = "11" * 32
