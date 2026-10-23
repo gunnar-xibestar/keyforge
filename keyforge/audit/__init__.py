@@ -18,7 +18,7 @@ from the process uid and are what to trust.
 from __future__ import annotations
 import getpass, hashlib, hmac, json, os, sys
 from ..errors import KeyForgeError
-from . import chain, format, log
+from . import chain, report, log
 
 iso = log.iso
 now = log.now
@@ -39,16 +39,16 @@ record = log.record
 _record_unchained = log._record_unchained
 _chain_expects_hmac = chain._chain_expects_hmac
 verify_chain = chain.verify_chain
-walk_movement = format.walk_movement
-walk_line = format.walk_line
-last_event_lines = format.last_event_lines
+walk_movement = report.walk_movement
+walk_line = report.walk_line
+last_event_lines = report.last_event_lines
 reseal_metadata_mac = chain.reseal_metadata_mac
-_check = format._check
-_event_date = format._event_date
+_check = report._check
+_event_date = report._event_date
 _hmac_key_missing_message = chain._hmac_key_missing_message
-_event_reason = format._event_reason
-key_event_match = format.key_event_match
-verify_report = format.verify_report
+_event_reason = report._event_reason
+key_event_match = report.key_event_match
+verify_report = report.verify_report
 adopt_legacy = log.adopt_legacy
 query = log.query
 
