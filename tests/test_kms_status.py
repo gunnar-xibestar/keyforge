@@ -17,6 +17,7 @@ def _run(*argv):
 
 class KmsStatusTests(unittest.TestCase):
     def setUp(self):
+        kms._user_pin = None
         self._saved = {k: os.environ.get(k) for k in (
             "KEYFORGE_KMS_PROVIDER", "KEYFORGE_KMS_KEY_FILE", "KEYFORGE_STORE",
             "KEYFORGE_PKCS11_MODULE", "KEYFORGE_PKCS11_TOKEN", "KEYFORGE_PKCS11_PIN",
@@ -27,6 +28,7 @@ class KmsStatusTests(unittest.TestCase):
         self.d = tempfile.TemporaryDirectory()
 
     def tearDown(self):
+        kms._user_pin = None
         for k, v in self._saved.items():
             if v is None:
                 os.environ.pop(k, None)
@@ -74,7 +76,11 @@ class KmsStatusTests(unittest.TestCase):
         self.assertTrue(info["pin_set"])
         self.assertNotIn("softhsm_setup", info)
         self.assertIn("input blank", err.getvalue())
-        self.assertEqual(os.environ["KEYFORGE_PKCS11_PIN"], "s3cret")
+        self.assertIsNone(os.environ.get("KEYFORGE_PKCS11_PIN"))
+        self.assertEqual(kms._user_pin, "s3cret")
+        self.assertNotIn("s3cret", str(info))
+        self.assertNotIn("s3cret", err.getvalue())
+        self.assertNotIn("s3cret", "\n".join(kms.format_status(info)))
 
     def test_missing_pin_without_a_terminal_prints_no_terminal_only(self):
         os.environ["KEYFORGE_KMS_PROVIDER"] = "pkcs11"
