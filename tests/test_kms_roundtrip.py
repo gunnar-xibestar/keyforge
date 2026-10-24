@@ -900,7 +900,7 @@ class PinRedactionTests(_EnvCase):
         err = io.StringIO()
         logs = self._capture_logs()
         with redirect_stderr(err):
-            info = kms.status()
+            info = kms.kms_status()
         text = "\n".join(kms.format_status(info))
         self.assertFalse(info["ready"])
         self.assertIn("[redacted]", info["error"])
@@ -909,7 +909,7 @@ class PinRedactionTests(_EnvCase):
         stub.open_error = None
         stub.seed("keyforge-kek")
         with redirect_stderr(err):
-            info = kms.status()
+            info = kms.kms_status()
         text = "\n".join(kms.format_status(info))
         self.assertTrue(info["ready"])
         self.assertNotIn("error", info)
@@ -1054,9 +1054,9 @@ class PinCacheTests(_EnvCase):
         with mock.patch("sys.stdin.isatty", return_value=True), \
              mock.patch("getpass.getpass", side_effect=fake), \
              redirect_stderr(io.StringIO()):
-            first = kms.status()
+            first = kms.kms_status()
             pkcs11_from_env()
-            second = kms.status()
+            second = kms.kms_status()
         self.assertEqual(calls, ["KEYFORGE_PKCS11_PIN: "])
         self.assertTrue(first["pin_set"])
         self.assertTrue(second["pin_set"])
@@ -1067,7 +1067,7 @@ class PinCacheTests(_EnvCase):
 
         with mock.patch("sys.stdin.isatty", return_value=False), \
              mock.patch("getpass.getpass", side_effect=AssertionError("prompted")):
-            later = kms.status()
+            later = kms.kms_status()
         self.assertTrue(later["pin_set"])
         self.assertNotEqual(kms.format_status(later), ["no terminal"])
         self.assertNotIn(PIN, str(later))

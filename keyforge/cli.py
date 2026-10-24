@@ -518,7 +518,7 @@ def cmd_setup(a, st=None):
 def cmd_kms(a, st=None):
     """Report the active KMS. Does not hold the store lock."""
     from . import kms as kms_mod
-    info = kms_mod.status(store_path=str(resolve_path(getattr(a, "store", None))))
+    info = kms_mod.kms_status(store_path=str(resolve_path(getattr(a, "store", None))))
     info = dict(info)
     info["result"] = "failure" if not info.get("ready") else "success"
     _out(a, info, "\n".join(kms_mod.format_status(info)))

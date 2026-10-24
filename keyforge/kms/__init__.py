@@ -32,22 +32,13 @@ from .pkcs11 import (
     _mentions_pin, _new_aes_key_notice, _open_token, _safe_exc,  # noqa: F401  # re-exported for tests
     confirm_user_pin, destroy_aes_labels, list_aes_labels, pkcs11_from_env, read_user_pin,
 )
-
-
-class _StatusModule(type(status)):
-    """The ``status`` submodule. Calling it runs ``status.status``."""
-
-    def __call__(self, *args, **kwargs):
-        return self.status(*args, **kwargs)
-
-
-status.__class__ = _StatusModule
+from .status import status as kms_status
 
 __all__ = [
     "local", "pkcs11", "status",
     "LocalKms", "Pkcs11Kms", "Pkcs11Token",
     "provider_for", "local_provider", "memory_provider", "pkcs11_from_env",
-    "format_status",
+    "format_status", "kms_status",
     "confirm_user_pin", "destroy_aes_labels", "list_aes_labels", "read_user_pin",
     "KeyForgeError",
 ]

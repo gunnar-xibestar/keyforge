@@ -13,7 +13,7 @@ from . import audit, auth
 from .errors import AuthError, KeyForgeError
 from .store import Store, resolve_path
 from .kms import (
-    confirm_user_pin, destroy_aes_labels, format_status, list_aes_labels, status as kms_status,
+    confirm_user_pin, destroy_aes_labels, format_status, list_aes_labels, kms_status,
 )
 from .softhsm import delete_token, init_token, matching_tokens
 

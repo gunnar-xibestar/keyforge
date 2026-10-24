@@ -50,7 +50,7 @@ class KmsStatusTests(unittest.TestCase):
 
     def test_pkcs11_reports_missing_without_export_confusion(self):
         os.environ["KEYFORGE_KMS_PROVIDER"] = "pkcs11"
-        info = kms.status()
+        info = kms.kms_status()
         self.assertEqual(info["provider"], "pkcs11")
         self.assertFalse(info["ready"])
         self.assertTrue(info.get("missing"))
@@ -71,7 +71,7 @@ class KmsStatusTests(unittest.TestCase):
         with mock.patch("sys.stdin.isatty", return_value=True), \
              mock.patch("getpass.getpass", side_effect=lambda _p: next(secrets)), \
              redirect_stderr(err):
-            info = kms.status()
+            info = kms.kms_status()
         self.assertTrue(info["pin_set"])
         self.assertNotIn("softhsm_setup", info)
         self.assertIn("input blank", err.getvalue())
@@ -87,7 +87,7 @@ class KmsStatusTests(unittest.TestCase):
         os.environ["KEYFORGE_PKCS11_TOKEN"] = "keyforge"
         os.environ["KEYFORGE_PKCS11_KEY_LABEL"] = "keyforge-kek"
         with mock.patch("sys.stdin.isatty", return_value=False):
-            info = kms.status()
+            info = kms.kms_status()
         self.assertEqual(kms.format_status(info), ["no terminal"])
 
     def test_memory_ready(self):
