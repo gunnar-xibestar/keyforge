@@ -2,7 +2,6 @@
 import io, os, tempfile, unittest
 from unittest import mock
 from contextlib import redirect_stderr, redirect_stdout
-from pathlib import Path
 
 from keyforge import cli
 from keyforge import kms
