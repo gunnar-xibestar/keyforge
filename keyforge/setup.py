@@ -395,8 +395,84 @@ def _walk_line(result: dict) -> str:
     return walk_line(result)
 
 
+def _step_store(echo, st) -> None:
+    """Store step: start the audit chain when metadata is absent."""
+    if st.data.get("audit_meta") is None:
+        echo("audit metadata is absent.")
+        echo("")
+        try:
+            ev = adopt_legacy(st)
+            st.save()
+        except KeyForgeError as e:
+            echo(f"audit chain was not created: {e}")
+            echo("Events already in this log cannot be checked for tampering.")
+            echo("")
+        else:
+            n = ev["details"]["legacy"]
+            echo(f"audit chain started; {n} legacy event(s) recorded as unprotected.")
+            echo("A legacy event has no prev_hash or hash. Changing it or deleting it is not detected.")
+            echo("")
+
+
+def _step_audit_key(echo, st, saved, path, key_created, key_path_was_unset, hmac_was_enabled):
+    """Audit-key step: create or reuse the HMAC key and verify the chain."""
+    key_file = os.environ.get("KEYFORGE_AUDIT_HMAC_KEY_FILE", "").strip()
+    if not key_file:
+        key_path_was_unset = True
+        key_file = str(path.parent / "audit-hmac.key")
+    key_file = os.path.expanduser(key_file)
+    # Always persist the path. _write_env replaces the whole file, so leaving
+    # this out when the variable was already set drops it for the next command.
+    saved["KEYFORGE_AUDIT_HMAC_KEY_FILE"] = key_file
+    os.environ["KEYFORGE_AUDIT_HMAC_KEY_FILE"] = key_file
+    if not os.path.lexists(key_file):
+        os.makedirs(os.path.dirname(key_file) or ".", mode=0o700, exist_ok=True)
+        fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(fd, secrets.token_bytes(32))
+        finally:
+            os.close(fd)
+        key_created = True
+        echo(f"audit HMAC key created: {key_file}")
+        echo("")
+        if key_path_was_unset:
+            echo("No KEYFORGE_AUDIT_HMAC_KEY_FILE was set, and no key file existed at the default path.")
+        else:
+            echo("KEYFORGE_AUDIT_HMAC_KEY_FILE pointed at a path with no key file yet.")
+        echo("Setup created one (32 random bytes, mode 0600).")
+        echo("Later setups reuse this file when it still exists; they do not mint a new secret each run.")
+        echo("")
+    else:
+        echo(f"audit HMAC key found: {key_file}")
+        echo("Reusing the existing secret. Setup does not create a new HMAC key when this file is present.")
+        echo("")
+    try:
+        key = hmac_key()
+    except KeyForgeError as e:
+        echo(f"audit HMAC key is unusable: {e}")
+        echo("")
+        key = None
+    meta = st.data.get("audit_meta") or {}
+    hmac_was_enabled = bool(meta.get("mac"))
+    if key and meta and "mac" not in meta:
+        record(st, "audit_hmac_enabled")
+        st.save()
+        echo("A new audit event was written so the metadata MAC starts at this event.")
+        echo("Events before it have no MAC. Rebuilding their hashes is not detected as tampering.")
+        echo("")
+    elif reseal_metadata_mac(st, key):
+        st.save()
+        echo("metadata MAC rewritten with the existing HMAC key.")
+        echo("Event hashes were not changed. The new tag covers the current log tip.")
+        echo("")
+    r = verify_chain(st.audit_log, st.data.get("audit_meta"), key)
+    return key_created, hmac_was_enabled, key, key_file, r
+
+
 def _audit_chain(echo, saved: dict) -> None:
-    """Verify the audit hash chain, start it when metadata is missing, and create an HMAC key file."""
+    """Verify the audit hash chain, start it when metadata is missing, and create an HMAC key file.
+    The store step runs first, then the audit-key step, both inside this store.
+    """
     path = resolve_path(None)
     echo("")
     echo("Audit chain")
@@ -408,71 +484,10 @@ def _audit_chain(echo, saved: dict) -> None:
     key_path_was_unset = False
     hmac_was_enabled = False
     with Store(path) as st:
-        if st.data.get("audit_meta") is None:
-            echo("audit metadata is absent.")
-            echo("")
-            try:
-                ev = adopt_legacy(st)
-                st.save()
-            except KeyForgeError as e:
-                echo(f"audit chain was not created: {e}")
-                echo("Events already in this log cannot be checked for tampering.")
-                echo("")
-            else:
-                n = ev["details"]["legacy"]
-                echo(f"audit chain started; {n} legacy event(s) recorded as unprotected.")
-                echo("A legacy event has no prev_hash or hash. Changing it or deleting it is not detected.")
-                echo("")
-        key_file = os.environ.get("KEYFORGE_AUDIT_HMAC_KEY_FILE", "").strip()
-        if not key_file:
-            key_path_was_unset = True
-            key_file = str(path.parent / "audit-hmac.key")
-        key_file = os.path.expanduser(key_file)
-        # Always persist the path. _write_env replaces the whole file, so leaving
-        # this out when the variable was already set drops it for the next command.
-        saved["KEYFORGE_AUDIT_HMAC_KEY_FILE"] = key_file
-        os.environ["KEYFORGE_AUDIT_HMAC_KEY_FILE"] = key_file
-        if not os.path.lexists(key_file):
-            os.makedirs(os.path.dirname(key_file) or ".", mode=0o700, exist_ok=True)
-            fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            try:
-                os.write(fd, secrets.token_bytes(32))
-            finally:
-                os.close(fd)
-            key_created = True
-            echo(f"audit HMAC key created: {key_file}")
-            echo("")
-            if key_path_was_unset:
-                echo("No KEYFORGE_AUDIT_HMAC_KEY_FILE was set, and no key file existed at the default path.")
-            else:
-                echo("KEYFORGE_AUDIT_HMAC_KEY_FILE pointed at a path with no key file yet.")
-            echo("Setup created one (32 random bytes, mode 0600).")
-            echo("Later setups reuse this file when it still exists; they do not mint a new secret each run.")
-            echo("")
-        else:
-            echo(f"audit HMAC key found: {key_file}")
-            echo("Reusing the existing secret. Setup does not create a new HMAC key when this file is present.")
-            echo("")
-        try:
-            key = hmac_key()
-        except KeyForgeError as e:
-            echo(f"audit HMAC key is unusable: {e}")
-            echo("")
-            key = None
-        meta = st.data.get("audit_meta") or {}
-        hmac_was_enabled = bool(meta.get("mac"))
-        if key and meta and "mac" not in meta:
-            record(st, "audit_hmac_enabled")
-            st.save()
-            echo("A new audit event was written so the metadata MAC starts at this event.")
-            echo("Events before it have no MAC. Rebuilding their hashes is not detected as tampering.")
-            echo("")
-        elif reseal_metadata_mac(st, key):
-            st.save()
-            echo("metadata MAC rewritten with the existing HMAC key.")
-            echo("Event hashes were not changed. The new tag covers the current log tip.")
-            echo("")
-        r = verify_chain(st.audit_log, st.data.get("audit_meta"), key)
+        _step_store(echo, st)
+        key_created, hmac_was_enabled, key, key_file, r = _step_audit_key(
+            echo, st, saved, path, key_created, key_path_was_unset, hmac_was_enabled,
+        )
     if r["ok"]:
         line = f"audit chain OK: {r['checked']} chained event(s), count {r['count']}, head {r['head']}"
         if r["mac_verified"]:
@@ -545,8 +560,8 @@ def _audit_chain(echo, saved: dict) -> None:
             echo("If the chain never had MACs, verify stays unkeyed until a secret is enabled.")
 
 
-def run(*, read_line, read_secret, echo, login=None) -> dict:
-    """Prompt for KMS, then Auth0. ``login`` defaults to password login."""
+def _step_kms(read_line, read_secret, echo):
+    """KMS/token step: choose a provider and configure its token or key file."""
     _marks(echo, 3)
     echo("")
     for line in _BANNER.splitlines():
@@ -655,7 +670,11 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         for line in kms_lines:
             echo(line)
         kms_lines = []
+    return choice, saved, kms_lines
 
+
+def _step_auth(read_line, read_secret, echo, login, choice, saved, kms_lines) -> dict:
+    """Auth step: keep, skip, or collect Auth0, then log in when it is configured."""
     echo("")
     auth_ready: list[str] = []
     existing_auth = {name: os.environ.get(name, "").strip() for name in (
@@ -762,3 +781,9 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     _echo_statuses(echo, kms_lines, auth_lines)
     _marks(echo, 5)
     return {"kms_provider": choice, "auth": {"logged_in": True, "sub": principal.sub}, "env_file": str(path), "sub": principal.sub}
+
+
+def run(*, read_line, read_secret, echo, login=None) -> dict:
+    """Prompt for KMS, then Auth0. ``login`` defaults to password login."""
+    choice, saved, kms_lines = _step_kms(read_line, read_secret, echo)
+    return _step_auth(read_line, read_secret, echo, login, choice, saved, kms_lines)

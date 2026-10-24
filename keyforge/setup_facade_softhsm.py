@@ -1,4 +1,10 @@
-"""Setup's calls into SoftHSM token discovery, creation, and deletion."""
+"""Setup's calls into SoftHSM token discovery, creation, and deletion.
+
+Patch ``keyforge.setup.matching_tokens``, ``keyforge.setup.init_token``, and
+``keyforge.setup.delete_token``. Setup looks those names up on itself. The
+functions below are bound at import, so patching ``keyforge.softhsm`` does not
+intercept them.
+"""
 from __future__ import annotations
 
 from .softhsm import delete_token as _delete_token
