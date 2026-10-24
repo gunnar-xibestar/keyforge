@@ -9,13 +9,16 @@ import os, secrets, shlex, shutil, stat, sys
 from datetime import datetime
 from pathlib import Path
 
-from . import audit, auth
+from .setup_facade_audit import (
+    adopt_legacy, hmac_key, last_event_lines, record, reseal_metadata_mac, verify_chain, walk_line,
+)
+from .setup_facade_auth import password_login, scope_grant, status as auth_status
 from .errors import AuthError, KeyForgeError
 from .store import Store, resolve_path
-from .kms import (
+from .setup_facade_kms import (
     confirm_user_pin, destroy_aes_labels, format_status, list_aes_labels, kms_status,
 )
-from .softhsm import delete_token, init_token, matching_tokens
+from .setup_facade_softhsm import delete_token, init_token, matching_tokens
 
 _PROVIDERS = ("local", "pkcs11", "memory")
 
@@ -384,12 +387,12 @@ def _failure_kinds(result: dict) -> list[str]:
 
 def _last_event_lines(result: dict) -> list[str]:
     """Every stored field of the last audit event, for debugging."""
-    return audit.last_event_lines(result)
+    return last_event_lines(result)
 
 
 def _walk_line(result: dict) -> str:
     """Say how far the walk went and whether it passed the first mismatch."""
-    return audit.walk_line(result)
+    return walk_line(result)
 
 
 def _audit_chain(echo, saved: dict) -> None:
@@ -409,7 +412,7 @@ def _audit_chain(echo, saved: dict) -> None:
             echo("audit metadata is absent.")
             echo("")
             try:
-                ev = audit.adopt_legacy(st)
+                ev = adopt_legacy(st)
                 st.save()
             except KeyForgeError as e:
                 echo(f"audit chain was not created: {e}")
@@ -451,7 +454,7 @@ def _audit_chain(echo, saved: dict) -> None:
             echo("Reusing the existing secret. Setup does not create a new HMAC key when this file is present.")
             echo("")
         try:
-            key = audit.hmac_key()
+            key = hmac_key()
         except KeyForgeError as e:
             echo(f"audit HMAC key is unusable: {e}")
             echo("")
@@ -459,17 +462,17 @@ def _audit_chain(echo, saved: dict) -> None:
         meta = st.data.get("audit_meta") or {}
         hmac_was_enabled = bool(meta.get("mac"))
         if key and meta and "mac" not in meta:
-            audit.record(st, "audit_hmac_enabled")
+            record(st, "audit_hmac_enabled")
             st.save()
             echo("A new audit event was written so the metadata MAC starts at this event.")
             echo("Events before it have no MAC. Rebuilding their hashes is not detected as tampering.")
             echo("")
-        elif audit.reseal_metadata_mac(st, key):
+        elif reseal_metadata_mac(st, key):
             st.save()
             echo("metadata MAC rewritten with the existing HMAC key.")
             echo("Event hashes were not changed. The new tag covers the current log tip.")
             echo("")
-        r = audit.verify_chain(st.audit_log, st.data.get("audit_meta"), key)
+        r = verify_chain(st.audit_log, st.data.get("audit_meta"), key)
     if r["ok"]:
         line = f"audit chain OK: {r['checked']} chained event(s), count {r['count']}, head {r['head']}"
         if r["mac_verified"]:
@@ -543,7 +546,7 @@ def _audit_chain(echo, saved: dict) -> None:
 
 
 def run(*, read_line, read_secret, echo, login=None) -> dict:
-    """Prompt for KMS, then Auth0. ``login`` defaults to ``auth.password_login``."""
+    """Prompt for KMS, then Auth0. ``login`` defaults to password login."""
     _marks(echo, 3)
     echo("")
     for line in _BANNER.splitlines():
@@ -676,7 +679,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
         echo("warning: turn it on later with `keyforge setup` after creating a Native app and an API in the Auth0 dashboard.")
         for key, value in saved.items():
             os.environ[key] = value
-        info = auth.status()
+        info = auth_status()
         _audit_chain(echo, saved)
         path = _write_env(saved)
         echo("")
@@ -728,7 +731,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     echo("")
     username = _ask(read_line, "username: ")
     echo("")
-    login = login or auth.password_login
+    login = login or password_login
     while True:
         password = read_secret("password: ")
         try:
@@ -745,7 +748,7 @@ def run(*, read_line, read_secret, echo, login=None) -> dict:
     _audit_chain(echo, saved)
     path = _write_env(saved)
     echo("")
-    grant = auth.scope_grant(principal)
+    grant = scope_grant(principal)
     auth_lines = [
         "result: success",
         f"logged in as {principal.sub}",
