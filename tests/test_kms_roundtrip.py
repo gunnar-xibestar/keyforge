@@ -943,7 +943,7 @@ class PinRedactionTests(_EnvCase):
 
     def test_pkcs11_stub_restores_keytype_identity(self):
         try:
-            import pkcs11
+            import pkcs11  # noqa: F401  # raises ImportError so the test skips without python-pkcs11
             from pkcs11 import KeyType
         except ImportError:
             self.skipTest("python-pkcs11 is not installed")

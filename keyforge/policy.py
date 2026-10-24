@@ -3,7 +3,7 @@ from __future__ import annotations
 import fnmatch
 from datetime import datetime
 from .errors import PolicyViolation
-from .models import parse_duration, now, parse_iso
+from .models import parse_duration, now
 
 DEFAULT_POLICY = {
     "max_ttl": None,              # e.g. "90d"
