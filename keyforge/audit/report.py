@@ -101,7 +101,6 @@ def _event_reason(ev: dict) -> str:
 def key_event_match(store) -> dict:
     """Relate store keys (as in ``list``) to audit events that name them."""
     keys = list(store.all())
-    by_id = {k.id: k for k in keys}
     log = store.audit_log
     events_by_key: dict[str, list] = {k.id: [] for k in keys}
     orphan: list[dict] = []

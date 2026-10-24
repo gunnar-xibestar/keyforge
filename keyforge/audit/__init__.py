@@ -16,10 +16,10 @@ Attribution: KEYFORGE_ACTOR and SUDO_USER are *claims* (env vars); ``os_user``/`
 from the process uid and are what to trust.
 """
 from __future__ import annotations
-import getpass, hashlib, hmac, json, os, sys
 from ..errors import KeyForgeError
 from . import chain, report, log
 
+# Patches must target keyforge.audit.log, .chain or .report where the name is looked up, not the package.
 iso = log.iso
 now = log.now
 parse_iso = log.parse_iso
@@ -53,8 +53,6 @@ adopt_legacy = log.adopt_legacy
 query = log.query
 
 __all__ = [
-    "annotations",
-    "getpass", "hashlib", "hmac", "json", "os", "sys",
     "KeyForgeError",
     "iso", "now", "parse_iso",
     "GENESIS", "canonical", "os_user", "actor", "hmac_key", "entry_hash",
