@@ -66,7 +66,7 @@ _ENV_KEYS = (
 
 
 class PinIncorrect(Exception):
-    """Name matches ``kms._pin_mismatch`` (it checks the class name only)."""
+    """Name matches ``kms.pkcs11._pin_mismatch`` (it checks the class name only)."""
 
 
 class _QuietError(Exception):

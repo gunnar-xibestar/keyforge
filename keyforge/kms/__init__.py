@@ -28,17 +28,19 @@ _PROVIDERS = ("local", "memory", "pkcs11")
 from . import local, pkcs11
 from .local import LocalKms, local_provider, memory_provider
 from .pkcs11 import (
-    Pkcs11Kms, Pkcs11Token, _mentions_pin, _new_aes_key_notice, _open_token, _safe_exc,
+    Pkcs11Kms, Pkcs11Token,
+    _mentions_pin, _new_aes_key_notice, _open_token, _safe_exc,  # noqa: F401  # re-exported for tests
     confirm_user_pin, destroy_aes_labels, list_aes_labels, pkcs11_from_env, read_user_pin,
 )
 from .status import status
 
 __all__ = [
-    "local", "pkcs11",
+    "local", "pkcs11", "status",
     "LocalKms", "Pkcs11Kms", "Pkcs11Token",
-    "_mentions_pin", "_new_aes_key_notice", "_open_token", "_safe_exc",
+    "provider_for", "local_provider", "memory_provider", "pkcs11_from_env",
+    "format_status",
     "confirm_user_pin", "destroy_aes_labels", "list_aes_labels", "read_user_pin",
-    "status",
+    "KeyForgeError",
 ]
 
 
